@@ -144,6 +144,25 @@ backslashes. Reads come in 64 KiB chunks. Nothing is written.
   shared client, because the sysmodule serves one client at a time. It mirrors SD log files to local files
   for `log` gates (`--mirror diag_log=ultimate:training_rooms/events.log`).
 
+## 6a. LAN only (operator note relayed 2026-11-15 ~23:10Z)
+
+The operator plans to block the Switch from the external internet. Nothing here needs it:
+- **Sysmodule:** its services are `fsp-srv set:sys hid:dbg bsd:u pm:dmnt pm:info ns:dev ns:am2 pgl`, with no
+  `nifm`, `ssl`, `time` or update service. It binds `0.0.0.0` on the console's LAN address (DHCP from the local
+  router).
+- **NRO:** it talks only to `127.0.0.1`.
+- **Host:** capture is the local card or OBS on `localhost`. Discovery (`tools/host/discover.py`) probes the
+  local /24 once every 2 min. No NTP, update or telemetry is used anywhere.
+
+Traffic stays light: the client sends requests only when the runner or an agent acts (no keep-alive loop), and
+screenshots never come from the Switch.
+
+**While the console is blocked, the online-scene rows can't be exercised on it.** The game can't reach its
+online menus; Eden showed the same with an offline profile (error 2306-0520, `eden/sr-nro-01/RESULTS.md`). The
+refusal stays proven by the host tests (`test_online_scene_refuses`,
+`test_macro_refused_mid_play_when_scene_goes_online`). The gate still fails closed whenever the NRO's report is
+missing or stale. No further network hardening is planned beyond the token, private peers and that gate.
+
 ## 7. ns2bench (ruling B.1, evaluated 2026-11-15)
 
 `github.com/phantomptr/ns2bench` was read at `a105ca7` in `/home/user/ref/ns2bench`; nothing was run or
