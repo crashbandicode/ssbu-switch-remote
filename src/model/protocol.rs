@@ -253,9 +253,8 @@ pub fn token_eq(given: &[u8], expected: &[u8]) -> bool {
         return false;
     }
     let mut diff = (given.len() != expected.len()) as u8;
-    for i in 0..expected.len() {
-        let g = given.get(i).copied().unwrap_or(0);
-        diff |= g ^ expected[i];
+    for (i, e) in expected.iter().enumerate() {
+        diff |= given.get(i).copied().unwrap_or(0) ^ e;
     }
     diff == 0
 }

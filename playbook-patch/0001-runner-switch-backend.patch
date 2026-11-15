@@ -1,0 +1,26 @@
+From: crashbandicode <crashbandicode@users.noreply.github.com>
+Subject: [PATCH] eden-runner: switch:// instances drive a physical Switch through switch-remote
+
+Against ssbu-mod-playbook 3332c0d. Not applied to the playbook; proposed by switch-remote.
+
+---
+diff --git a/tools/eden-runner/runner.py b/tools/eden-runner/runner.py
+index ff236dd..ac08790 100644
+--- a/tools/eden-runner/runner.py
++++ b/tools/eden-runner/runner.py
+@@ -951,8 +951,14 @@ class PipeClient:
+ 
+ 
+ def default_client_factory():
+-    """Unix socket path -> edenctl Client; \\\\.\\pipe\\name -> PipeClient (Windows hosts such as the Ally)."""
++    """Unix socket path -> edenctl Client; \\\\.\\pipe\\name -> PipeClient (Windows hosts such as the Ally);
++    switch://HOST:PORT -> the switch-remote client for a physical Switch (SWITCH_REMOTE_DIR, default
++    ~/ssbu-switch-remote/host)."""
+     def make(socket_path):
++        if str(socket_path).startswith('switch://'):
++            sys.path.insert(0, __import__('os').environ.get('SWITCH_REMOTE_DIR', str(Path.home() / 'ssbu-switch-remote' / 'host')))
++            from switch_remote import make_client
++            return make_client(str(socket_path))
+         if str(socket_path).startswith('\\\\.\\pipe\\'):
+             return PipeClient(socket_path)
+         sys.path.insert(0, EDENCTL_DIR)

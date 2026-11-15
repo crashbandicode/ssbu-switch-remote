@@ -283,7 +283,7 @@ fn start_reporter() -> bool {
             reporter_main,
             core::ptr::null_mut(),
             THREAD_STACK.0.get().cast::<u8>(),
-            STACK as u64,
+            STACK,
             priority,
         );
         if created != 0 {

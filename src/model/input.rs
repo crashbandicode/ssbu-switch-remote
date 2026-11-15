@@ -241,9 +241,10 @@ mod tests {
         assert_eq!(lease_deadline(0, 99_999, freq), 192_000_000); // clamped to 10 s
         let mut deadlines = [0u64; BUTTONS];
         deadlines[0] = d;
-        deadlines[9] = 5;
+        deadlines[9] = 5_000_000;
         assert_eq!(held_mask(&deadlines, 1000), 1 | 512);
-        assert_eq!(held_mask(&deadlines, 1000 + 1_920_000), 0);
+        assert_eq!(held_mask(&deadlines, 1000 + 1_920_000), 512);
+        assert_eq!(held_mask(&deadlines, 5_000_000), 0);
     }
 
     #[test]

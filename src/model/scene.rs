@@ -1,7 +1,5 @@
 //! The scene report: what the NRO reads and the line it sends to the sysmodule.
 
-use core::fmt::Write as _;
-
 /// The game version every address here belongs to.
 pub const SUPPORTED_VERSION: &str = "13.0.5";
 
