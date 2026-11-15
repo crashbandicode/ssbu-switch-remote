@@ -1,0 +1,1 @@
+{"serving": "/run/user/1000/switch-remote-capd-probe.sock", "device": "/dev/video4", "caps": "image/jpeg,width=1920,height=1080,framerate=60/1"}

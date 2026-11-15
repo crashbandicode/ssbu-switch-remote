@@ -1,0 +1,53 @@
+{
+  "time": "2026-11-15T21:39:46.8247247Z",
+  "device": "/dev/video4",
+  "screenshot_call_ms": [
+    148,
+    94,
+    91,
+    87,
+    93,
+    101,
+    97,
+    91,
+    88,
+    94
+  ],
+  "screenshot_note": "includes a python process start per call (client), JPEG decode, 1280-wide PNG write",
+  "last_shot": {
+    "path": "/home/user/ssbu-switch-remote/host/../shots/warm-10.png",
+    "width": 1280,
+    "height": 720,
+    "uniform": true,
+    "frame_time": 1794778781.5645275,
+    "backend": "capture-card"
+  },
+  "recording_start": {
+    "id": 1,
+    "ok": true,
+    "result": {
+      "accepted": true,
+      "started_wall": 1794778781.6663888,
+      "path": "/home/user/ssbu-switch-remote/host/../shots/rec-213941.mkv"
+    }
+  },
+  "recording_stop": {
+    "path": "/home/user/ssbu-switch-remote/host/../shots/rec-213941.mkv",
+    "frames": 303,
+    "dropped_frames": 0,
+    "first_wall": 1794778781.6814756,
+    "last_wall": 1794778786.7144468,
+    "frames_file": "/home/user/ssbu-switch-remote/host/../shots/rec-213941.mkv.frames.jsonl"
+  },
+  "status": {
+    "device": "/dev/video4",
+    "caps": "image/jpeg,width=1920,height=1080,framerate=60/1",
+    "frames": 400,
+    "last_frame_age_ms": 18,
+    "signal": true,
+    "recording": {
+      "state": "idle"
+    }
+  },
+  "daemon_cpu_seconds": 0.68
+}

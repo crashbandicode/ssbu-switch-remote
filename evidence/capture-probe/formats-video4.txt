@@ -1,0 +1,96 @@
+name  : Live Gamer Ultra 2.1 (V4L2)
+	class : Video/Source
+	caps  : video/x-raw(memory:DMABuf), drm-format=YUYV, format=DMA_DRM, interlace-mode=progressive, width=640, height=480, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)30/1 }, colorimetry=bt709
+	        video/x-raw, format=YUY2, interlace-mode=progressive, width=640, height=480, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)30/1 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=YUYV, format=DMA_DRM, interlace-mode=progressive, width=720, height=480, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw, format=YUY2, interlace-mode=progressive, width=720, height=480, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=YUYV, format=DMA_DRM, interlace-mode=progressive, width=720, height=576, framerate={ (fraction)50/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw, format=YUY2, interlace-mode=progressive, width=720, height=576, framerate={ (fraction)50/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=YUYV, format=DMA_DRM, interlace-mode=progressive, width=1280, height=720, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw, format=YUY2, interlace-mode=progressive, width=1280, height=720, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=YUYV, format=DMA_DRM, interlace-mode=progressive, width=1280, height=800, framerate={ (fraction)60/1, (fraction)7013/117 }, colorimetry=bt709
+	        video/x-raw, format=YUY2, interlace-mode=progressive, width=1280, height=800, framerate={ (fraction)60/1, (fraction)7013/117 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=YUYV, format=DMA_DRM, interlace-mode=progressive, width=1920, height=1080, framerate={ (fraction)120/1, (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw, format=YUY2, interlace-mode=progressive, width=1920, height=1080, framerate={ (fraction)120/1, (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=YUYV, format=DMA_DRM, interlace-mode=progressive, width=1920, height=1200, framerate=60/1, colorimetry=bt709
+	        video/x-raw, format=YUY2, interlace-mode=progressive, width=1920, height=1200, framerate=60/1, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=YUYV, format=DMA_DRM, interlace-mode=progressive, width=2560, height=1080, framerate={ (fraction)120/1, (fraction)60/1, (fraction)7013/117, (fraction)30/1 }, colorimetry=bt709
+	        video/x-raw, format=YUY2, interlace-mode=progressive, width=2560, height=1080, framerate={ (fraction)120/1, (fraction)60/1, (fraction)7013/117, (fraction)30/1 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=YUYV, format=DMA_DRM, interlace-mode=progressive, width=2560, height=1440, framerate={ (fraction)60/1, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw, format=YUY2, interlace-mode=progressive, width=2560, height=1440, framerate={ (fraction)60/1, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=YUYV, format=DMA_DRM, interlace-mode=progressive, width=3440, height=1440, framerate=60/1, colorimetry=bt709
+[466:12:04.350781654] [1588555]  INFO Camera camera_manager.cpp:340 libcamera v0.7.0
+	        video/x-raw, format=YUY2, interlace-mode=progressive, width=3440, height=1440, framerate=60/1, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=YUYV, format=DMA_DRM, interlace-mode=progressive, width=3840, height=2160, framerate={ (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw, format=YUY2, interlace-mode=progressive, width=3840, height=2160, framerate={ (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        image/jpeg, width=1920, height=1080, framerate={ (fraction)5000000/20833, (fraction)120/1, (fraction)60/1 }, colorimetry=2:4:5:4
+	        image/jpeg, width=2560, height=1440, framerate={ (fraction)144/1, (fraction)120/1, (fraction)60/1 }, colorimetry=2:4:5:4
+	        image/jpeg, width=3440, height=1440, framerate=60/1, colorimetry=2:4:5:4
+	        image/jpeg, width=3840, height=2160, framerate=60/1, colorimetry=2:4:5:4
+	        video/x-raw(memory:DMABuf), drm-format=NV12, format=DMA_DRM, interlace-mode=progressive, width=640, height=480, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)30/1 }, colorimetry=bt709
+	        video/x-raw, format=NV12, interlace-mode=progressive, width=640, height=480, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)30/1 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=NV12, format=DMA_DRM, interlace-mode=progressive, width=1280, height=720, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw, format=NV12, interlace-mode=progressive, width=1280, height=720, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=NV12, format=DMA_DRM, interlace-mode=progressive, width=1280, height=800, framerate={ (fraction)60/1, (fraction)7013/117 }, colorimetry=bt709
+	        video/x-raw, format=NV12, interlace-mode=progressive, width=1280, height=800, framerate={ (fraction)60/1, (fraction)7013/117 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=NV12, format=DMA_DRM, interlace-mode=progressive, width=1920, height=1080, framerate={ (fraction)5000000/20833, (fraction)120/1, (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw, format=NV12, interlace-mode=progressive, width=1920, height=1080, framerate={ (fraction)5000000/20833, (fraction)120/1, (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=NV12, format=DMA_DRM, interlace-mode=progressive, width=1920, height=1200, framerate=60/1, colorimetry=bt709
+	        video/x-raw, format=NV12, interlace-mode=progressive, width=1920, height=1200, framerate=60/1, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=NV12, format=DMA_DRM, interlace-mode=progressive, width=2560, height=1440, framerate={ (fraction)144/1, (fraction)120/1, (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw, format=NV12, interlace-mode=progressive, width=2560, height=1440, framerate={ (fraction)144/1, (fraction)120/1, (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=NV12, format=DMA_DRM, interlace-mode=progressive, width=2560, height=1080, framerate={ (fraction)120/1, (fraction)60/1, (fraction)7013/117, (fraction)30/1 }, colorimetry=bt709
+	        video/x-raw, format=NV12, interlace-mode=progressive, width=2560, height=1080, framerate={ (fraction)120/1, (fraction)60/1, (fraction)7013/117, (fraction)30/1 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=NV12, format=DMA_DRM, interlace-mode=progressive, width=3440, height=1440, framerate=60/1, colorimetry=bt709
+	        video/x-raw, format=NV12, interlace-mode=progressive, width=3440, height=1440, framerate=60/1, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=NV12, format=DMA_DRM, interlace-mode=progressive, width=3840, height=2160, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw, format=NV12, interlace-mode=progressive, width=3840, height=2160, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=bt709
+	        video/x-raw(memory:DMABuf), drm-format=RG24, format=DMA_DRM, interlace-mode=progressive, width=640, height=480, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)30/1 }, colorimetry=1:3:5:1
+	        video/x-raw, format=BGR, interlace-mode=progressive, width=640, height=480, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)30/1 }, colorimetry=1:3:5:1
+	        video/x-raw(memory:DMABuf), drm-format=RG24, format=DMA_DRM, interlace-mode=progressive, width=720, height=480, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)30/1, (fraction)2997/100 }, colorimetry=1:3:5:1
+	        video/x-raw, format=BGR, interlace-mode=progressive, width=720, height=480, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)30/1, (fraction)2997/100 }, colorimetry=1:3:5:1
+	        video/x-raw(memory:DMABuf), drm-format=RG24, format=DMA_DRM, interlace-mode=progressive, width=720, height=576, framerate={ (fraction)50/1, (fraction)2997/100 }, colorimetry=1:3:5:1
+	        video/x-raw, format=BGR, interlace-mode=progressive, width=720, height=576, framerate={ (fraction)50/1, (fraction)2997/100 }, colorimetry=1:3:5:1
+	        video/x-raw(memory:DMABuf), drm-format=RG24, format=DMA_DRM, interlace-mode=progressive, width=1280, height=720, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=1:3:5:1
+	        video/x-raw, format=BGR, interlace-mode=progressive, width=1280, height=720, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=1:3:5:1
+	        video/x-raw(memory:DMABuf), drm-format=RG24, format=DMA_DRM, interlace-mode=progressive, width=1280, height=800, framerate={ (fraction)60/1, (fraction)7013/117 }, colorimetry=1:3:5:1
+	        video/x-raw, format=BGR, interlace-mode=progressive, width=1280, height=800, framerate={ (fraction)60/1, (fraction)7013/117 }, colorimetry=1:3:5:1
+	        video/x-raw(memory:DMABuf), drm-format=RG24, format=DMA_DRM, interlace-mode=progressive, width=1920, height=1080, framerate={ (fraction)120/1, (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=1:3:5:1
+	        video/x-raw, format=BGR, interlace-mode=progressive, width=1920, height=1080, framerate={ (fraction)120/1, (fraction)60/1, (fraction)7013/117, (fraction)50/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=1:3:5:1
+	        video/x-raw(memory:DMABuf), drm-format=RG24, format=DMA_DRM, interlace-mode=progressive, width=1920, height=1200, framerate=60/1, colorimetry=1:3:5:1
+	        video/x-raw, format=BGR, interlace-mode=progressive, width=1920, height=1200, framerate=60/1, colorimetry=1:3:5:1
+	        video/x-raw(memory:DMABuf), drm-format=RG24, format=DMA_DRM, interlace-mode=progressive, width=2560, height=1080, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)30/1 }, colorimetry=1:3:5:1
+	        video/x-raw, format=BGR, interlace-mode=progressive, width=2560, height=1080, framerate={ (fraction)60/1, (fraction)7013/117, (fraction)30/1 }, colorimetry=1:3:5:1
+	        video/x-raw(memory:DMABuf), drm-format=RG24, format=DMA_DRM, interlace-mode=progressive, width=2560, height=1440, framerate={ (fraction)60/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=1:3:5:1
+	        video/x-raw, format=BGR, interlace-mode=progressive, width=2560, height=1440, framerate={ (fraction)60/1, (fraction)30/1, (fraction)2997/100 }, colorimetry=1:3:5:1
+	properties:
+		is-default = false (gboolean)
+		object.path = v4l2:/dev/video4
+		device.api = v4l2
+		media.class = Video/Source
+		device.product.id = 0x2553
+		device.vendor.id = 0x07ca
+		api.v4l2.path = /dev/video4
+		device.devids = [ 20740 ]
+		api.v4l2.cap.driver = uvcvideo
+		api.v4l2.cap.card = Live Gamer Ultra 2.1: Live Game
+		api.v4l2.cap.bus_info = usb-0000:00:0d.0-2.4
+		api.v4l2.cap.version = 7.2.6
+		api.v4l2.cap.capabilities = 0x84a00001
+		api.v4l2.cap.device-caps = 0x04200001
+		device.id = 54
+		factory.name = api.v4l2.source
+		node.pause-on-idle = false
+		node.name = v4l2_input.pci-0000_00_0d.0-usb-0_2.4_1.0
+		node.description = Live Gamer Ultra 2.1 (V4L2)
+		node.nick = Live Gamer Ultra 2.1
+		priority.session = 960
+		factory.id = 11
+		client.id = 40
+		clock.quantum-limit = 8192
+		node.loop.name = data-loop.0
+		media.role = Camera
+		node.driver = true
+		object.id = 62
+		object.serial = 304
+	gst-launch-1.0 pipewiresrc target-object=304 ! ...

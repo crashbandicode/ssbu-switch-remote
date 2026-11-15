@@ -1,0 +1,6 @@
+/target/
+/dist/
+__pycache__/
+*.pyc
+/host/out/
+/shots/
