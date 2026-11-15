@@ -50,7 +50,7 @@ The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive 
   staging `/home/user/eden-runs-staging/sr-nro-01/`, log `queued.log` there, run `/home/user/eden-runs/sr-nro-01/`,
   summary `sr-summary.json`). Stop it with `systemctl --user stop sr-nro-01-queue` on the Yoga (before Up: nothing to undo).
 - Hardware smoke runner: `tools/host/smoke.py --host IP --out DIR preflight|launch|play SEG..|step BTN|online-check|terminate|bye`.
-- Eden proof was BLOCKED on host time. The Yoga has a perf-sensitive calibration (dgs-cal-b2) and the XPS a
+- Eden proof ran 2026-11-15 23:00Z (primary GO), two short Yoga boots: install line, channel, title and main gate `allowed` PASS; online rows blocked by the profile (no LAN online, error 2306-0520). `eden/sr-nro-01/RESULTS.md`. The Yoga has a perf-sensitive calibration (dgs-cal-b2) and the XPS a
   timed-row Eden; the Surface is excluded. A ruling was requested (Eden slot first, or card install now).
 - Watcher: `/tmp/switch-remote-watcher-81d86844.ps1`, re-armed on each resume (owner = the claude pid).
 
