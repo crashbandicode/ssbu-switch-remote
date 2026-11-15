@@ -35,8 +35,12 @@ The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive 
 - Capture card: `/dev/video4` works, but there is no signal yet: the console is in hekate UMS, mounted
   read-only for us at `/run/media/intpa/SWITCH SD`. OBS 32.2.0 (snap) is installed but not running.
 - Ledger: no open claims of ours. The first sysmodule build left `bid=cb1efd13` open; it was released by hand.
-  Lanes cleaned: `switch-remote-sysmodule` by the script. The cargo lane `switch-remote` on the Yoga keeps
-  target dirs (run `remote-gate.ps1 -Action Clean -BuildHost yoga -Lane switch-remote` when done).
+  Lanes cleaned: `switch-remote-sysmodule` (by the script) and `switch-remote` on the Yoga and the XPS
+  (`remote-gate.ps1 -Action Clean`, 22:2xZ).
+- Install bundle: `/home/user/ssbu-switch-remote-work/install-r1/` (`sd/` tree + `MANIFEST.json`). The
+  token lives only in `~/.config/switch-remote/token` (0600) and the bundle's `config.txt` (0600).
+- Eden proof: BLOCKED on host time. The Yoga has a perf-sensitive calibration (dgs-cal-b2) and the XPS a
+  timed-row Eden; the Surface is excluded. A ruling was requested (Eden slot first, or card install now).
 - Watcher: `/tmp/switch-remote-watcher-81d86844.ps1`, re-armed on each resume (owner = the claude pid).
 
 ## Next commands
