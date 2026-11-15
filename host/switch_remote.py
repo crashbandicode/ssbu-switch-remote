@@ -266,6 +266,8 @@ class SwitchClient:
         if method in ('switch.launch', 'switch.terminate', 'switch.relaunch', 'switch.dismiss', 'switch.detach'):
             reply = self._sys(method.split('.', 1)[1].upper())
             return {'reply': reply}
+        if method == 'switch.records':
+            return self.records()
         if method == 'switch.list':
             return self.list(p['root'], p.get('dir', ''))
         if method == 'switch.file':
@@ -324,6 +326,19 @@ class SwitchClient:
                     entries.append({'type': 'dir' if kind == 'd' else 'file', 'size': int(size),
                                     'mtime': int(mtime), 'name': name})
         return entries
+
+    def records(self):
+        """What the sysmodule sees of the HOME order: ns records and its first-tile verdict (receipt for LAUNCH)."""
+        with self.lock:
+            if self.conn.sock is None:
+                self.conn.open()
+            line = self.conn.call('RECORDS')  # OK records <n> first_tile=<verdict>
+            n, head = int(line.split()[2]), parse_kv(line)
+            rows = []
+            for _ in range(n):
+                rid, event, updated = self.conn.read_line().split()
+                rows.append({'id': rid, 'last_event': int(event), 'last_updated': int(updated)})
+        return {'first_tile': head.get('first_tile'), 'records': rows}
 
     def file(self, root, path, offset=0, max_bytes=65536):
         with self.lock:

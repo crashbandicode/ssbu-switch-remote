@@ -162,6 +162,14 @@ const char* gate_name(Gate g) {
     return "?";
 }
 
+const char* first_tile_check(const AppRecord* records, size_t n, uint64_t target) {
+    if (!records || n == 0) return "records_unavailable";
+    if (records[0].id != target) return "first_tile_not_target";
+    for (size_t i = 1; i < n; i++)
+        if (records[i].last_updated >= records[0].last_updated) return "first_tile_ambiguous";
+    return nullptr;
+}
+
 const char* system_sequence_allowed(bool application_running, bool sequence_busy) {
     if (application_running) return "application_running";
     if (sequence_busy) return "sequence_busy";
@@ -438,6 +446,9 @@ const char* parse_request(std::string_view line, Request& r) {
     } else if (m == "RELAUNCH") {
         if (!want(1)) return err;
         r.method = Method::Relaunch;
+    } else if (m == "RECORDS") {
+        if (!want(1)) return err;
+        r.method = Method::Records;
     } else if (m == "DETACH") {
         if (!want(1)) return err;
         r.method = Method::Detach;

@@ -227,12 +227,16 @@ class AgainstLoopback(unittest.TestCase):
         self.assertEqual(states[-1]['buttons'] & 1, 0)
 
     def test_launch_only_without_application(self):
+        (self.lb.root / 'fake-records').write_text('01006a800016e000 0 900\n0100000000010000 0 800\n')
         (self.lb.root / 'fake-app').write_text('81 01006a800016e000\n')
         time.sleep(0.3)
         r = self.c.request('switch.launch')
         self.assertEqual((r['ok'], r['error']['message']), (False, 'application_running'))
         (self.lb.root / 'fake-app').unlink()
         time.sleep(0.3)
+        rec = self.c.request('switch.records')['result']
+        self.assertEqual(rec['first_tile'], 'ssbu')
+        self.assertEqual(rec['records'][0], {'id': '0x1006a800016e000', 'last_event': 0, 'last_updated': 900})
         r = self.c.request('switch.launch')
         self.assertTrue(r['ok'], r)
         time.sleep(2.2)
@@ -240,6 +244,31 @@ class AgainstLoopback(unittest.TestCase):
         a = pressed_runs(self.lb.pad(), 0)
         self.assertEqual((len(home), len(a)), (1, 1))
         self.assertGreater(a[0][0] - home[0][1], 1.4)  # HOME, wait 1.5 s, then A
+
+    def test_launch_refused_unless_ssbu_is_the_first_tile(self):
+        r = self.c.request('switch.launch')  # no records at all
+        self.assertEqual((r['ok'], r['error']['message']), (False, 'records_unavailable'))
+        (self.lb.root / 'fake-records').write_text('0100000000010000 0 900\n01006a800016e000 0 800\n')
+        r = self.c.request('switch.launch')
+        self.assertEqual(r['error']['message'], 'first_tile_not_target')
+        (self.lb.root / 'fake-records').write_text('01006a800016e000 0 800\n0100000000010000 0 900\n')
+        r = self.c.request('switch.launch')
+        self.assertEqual(r['error']['message'], 'first_tile_ambiguous')
+        time.sleep(0.2)
+        self.assertEqual(pressed_runs(self.lb.pad(), 18), [], 'no HOME press after a refusal')
+        r = self.c.request('switch.dismiss')  # DISMISS needs no tile: A only, without an application
+        self.assertTrue(r['ok'], r)
+        time.sleep(0.5)
+        self.assertEqual((len(pressed_runs(self.lb.pad(), 0)), pressed_runs(self.lb.pad(), 18)), (1, []))
+
+    def test_disconnect_releases_held_input(self):
+        self.lb.feed_scene()
+        self.assertTrue(self.c.request('input.button', {'button': 'b', 'state': 'press', 'lease_ms': 8000})['ok'])
+        time.sleep(0.2)
+        self.c.conn.close()
+        time.sleep(0.4)
+        states = [s for s in self.lb.pad() if s.get('event') == 'state']
+        self.assertEqual(states[-1]['buttons'] & 2, 0, 'B released when the client went away')
 
     def test_terminate_and_exit_count(self):
         (self.lb.root / 'fake-app').write_text('81 01006a800016e000\n')

@@ -238,6 +238,25 @@ static void launch_only_without_application() {
     CHECK(kRootPaths[size_t(Root::Skyline)] == "/atmosphere/contents/01006A800016E000/romfs/skyline");
 }
 
+static void first_tile_requires_both_signals() {
+    const uint64_t S = kSsbuProgramId, O = 0x0100000000010000ull;
+    AppRecord ok[3] = {{S, 0, 900}, {O, 0, 800}, {0x0100000000020000ull, 1, 100}};
+    STREQ(first_tile_check(ok, 3, S), nullptr);
+    STREQ(first_tile_check(ok, 0, S), "records_unavailable");
+    STREQ(first_tile_check(nullptr, 3, S), "records_unavailable");
+    AppRecord other_first[2] = {{O, 0, 900}, {S, 0, 800}};
+    STREQ(first_tile_check(other_first, 2, S), "first_tile_not_target");
+    AppRecord newer_elsewhere[2] = {{S, 0, 800}, {O, 0, 900}};
+    STREQ(first_tile_check(newer_elsewhere, 2, S), "first_tile_ambiguous");
+    AppRecord tie[2] = {{S, 0, 900}, {O, 0, 900}};
+    STREQ(first_tile_check(tie, 2, S), "first_tile_ambiguous");
+    AppRecord only[1] = {{S, 0, 1}};
+    STREQ(first_tile_check(only, 1, S), nullptr);
+    Request r;
+    STREQ(parse_request("RECORDS", r), nullptr);
+    CHECK(r.method == Method::Records);
+}
+
 static void line_buffer() {
     LineBuf<16> b;
     b.put("OK ");
@@ -261,6 +280,7 @@ int main() {
     parses_every_method();
     refuses_bad_requests();
     launch_only_without_application();
+    first_tile_requires_both_signals();
     line_buffer();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

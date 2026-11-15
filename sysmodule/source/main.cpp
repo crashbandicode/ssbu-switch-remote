@@ -80,6 +80,14 @@ public:
         pid = p;
         program = prog;
     }
+    long app_records(AppRecord* out, size_t max) override {
+        static NsApplicationRecord rec[16];
+        s32 n = 0;
+        if (max > 16) max = 16;
+        if (R_FAILED(nsListApplicationRecord(rec, s32(max), 0, &n))) return -1;
+        for (s32 i = 0; i < n; i++) out[i] = AppRecord{rec[i].application_id, rec[i].last_event, rec[i].last_updated};
+        return n;
+    }
     uint32_t terminate(uint64_t pid) override {
         Result rc = nsdevTerminateApplication();
         if (R_FAILED(rc)) rc = pglTerminateProcess(pid);  // Atmosphere creport's way on 10.0+
@@ -319,6 +327,7 @@ void serve() {
         if (p[1].revents & POLLIN) accept_into(scene_l, scene, true);
         if (hi >= 0 && p[hi].revents && !pump(host)) {
             g_platform->log("host peer closed");
+            g_service->on_disconnect(host.session);
             close_conn(host);
         }
         if (si >= 0 && p[si].revents && !pump(scene)) close_conn(scene);
@@ -356,6 +365,7 @@ bool init_services() {
                {"pm:dmnt", pmdmntInitialize()},
                {"pm:info", pminfoInitialize()},
                {"ns:dev", nsdevInitialize()},
+               {"ns:am2", nsInitialize()},
                {"pgl", pglInitialize()}};
     for (auto& s : svc) {
         if (R_FAILED(s.rc)) {

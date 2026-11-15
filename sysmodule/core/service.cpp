@@ -206,6 +206,38 @@ bool Service::do_file(const Request& r, Sink& out) {
     return reply(out, head.view()) && out.write(file_buf_, size_t(n));
 }
 
+void Service::on_disconnect(const Session& s) {
+    if (s.scene) return;
+    Guard g(p_);
+    bool held = !(leases_.state(p_.now()) == PadState{}) || macro_.phase == MacroPhase::Playing;
+    leases_.reset();
+    if (macro_.phase == MacroPhase::Playing) macro_.stop("client_disconnected");
+    if (held) logf("host disconnected: input released");
+}
+
+bool Service::do_records(Sink& out) {
+    AppRecord rec[kRecords];
+    long n = p_.app_records(rec, kRecords);
+    if (n < 0) return reply_err(out, "records_unavailable");
+    LineBuf<64> head;
+    head.put("OK records ");
+    head.put_u64(uint64_t(n));
+    const char* tile = first_tile_check(rec, size_t(n), kSsbuProgramId);
+    head.put(" first_tile=");
+    head.put(tile ? tile : "ssbu");
+    if (!reply(out, head.view())) return false;
+    for (long i = 0; i < n; i++) {
+        LineBuf<96> line;
+        line.put_hex(rec[i].id);
+        line.put(" ");
+        line.put_u64(rec[i].last_event);
+        line.put(" ");
+        line.put_u64(rec[i].last_updated);
+        if (!reply(out, line.view())) return false;
+    }
+    return true;
+}
+
 bool Service::handle(Session& s, std::string_view line, Sink& out) {
     Request r;
     if (const char* e = parse_request(line, r)) {
@@ -313,13 +345,22 @@ bool Service::handle(Session& s, std::string_view line, Sink& out) {
             macro_.stop(nullptr);
             return reply(out, "OK");
         }
+        case Method::Records: return do_records(out);
         case Method::Launch:
         case Method::Dismiss: {
             refresh_app();
+            // LAUNCH presses A on the first tile: it must be SSBU, confirmed by ns (operator ruling A.1).
+            const char* tile = nullptr;
+            if (r.method == Method::Launch) {
+                AppRecord rec[kRecords];
+                long n = p_.app_records(rec, kRecords);
+                tile = first_tile_check(rec, n < 0 ? 0 : size_t(n), kSsbuProgramId);
+            }
             const char* e;
             {
                 Guard g(p_);
                 e = system_sequence_allowed(app_pid_ != 0, seq_len_ != 0);
+                if (!e && tile) e = tile;
                 if (!e) {
                     static const Step launch[] = {{kButtonHome, 120}, {0, 1500}, {kButtonA, 120}, {0, 200}};
                     static const Step dismiss[] = {{kButtonA, 120}, {0, 200}};

@@ -116,6 +116,20 @@ const char* gate_name(Gate g);
 // scene report. They run only while no application process exists, so no online game can receive
 // them (DESIGN.md section 2, "the launch exception"). Null when allowed, else an error code.
 const char* system_sequence_allowed(bool application_running, bool sequence_busy);
+
+// One ns application record (ns:am2 IApplicationManagerInterface cmd 0 ListApplicationRecord; libnx
+// NsApplicationRecord: application_id, last_event, last_updated).
+struct AppRecord {
+    uint64_t id = 0;
+    uint8_t last_event = 0;
+    uint64_t last_updated = 0;
+};
+// LAUNCH presses A on the HOME menu's first tile, so the target must be that tile (operator ruling
+// 2026-11-15). Neither the record order nor the HOME rule is documented (switchbrew NS_services), so two
+// signals must agree: the target is record 0 AND no other record has a LastUpdated as new or newer.
+// Null when confirmed, else: records_unavailable, first_tile_not_target, first_tile_ambiguous.
+const char* first_tile_check(const AppRecord* records, size_t n, uint64_t target);
+constexpr uint64_t kSsbuProgramId = 0x01006A800016E000ull;
 bool mode_is_online(uint32_t mode);
 Gate gate(const SceneReport& r, uint64_t now, uint64_t freq);
 
@@ -150,7 +164,7 @@ constexpr uint32_t kFileChunkMax = 64 * 1024;
 
 enum class Method : uint8_t {
     Auth, Ping, Status, Button, Stick, Reset, MacroBegin, MacroEvent, MacroPlay, MacroStatus, MacroStop,
-    Launch, Terminate, Relaunch, Dismiss, Detach, List, File, Bye,
+    Launch, Terminate, Relaunch, Dismiss, Detach, Records, List, File, Bye,
     Scene,  // scene channel only (from the in-game NRO)
 };
 enum class BtnState : uint8_t { Press, Release, Tap };

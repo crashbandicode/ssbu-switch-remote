@@ -17,6 +17,8 @@ struct Platform {
     virtual void log(const char* line) = 0;
     // The running application, if any (pid 0 = none).
     virtual void app(uint64_t& pid, uint64_t& program) = 0;
+    // The application records, newest first as ns returns them (ns:am2 ListApplicationRecord); -1 on failure.
+    virtual long app_records(AppRecord* out, size_t max) = 0;
     // Terminates the application; 0 on success.
     virtual uint32_t terminate(uint64_t pid) = 0;
     virtual void sleep_ms(uint64_t ms) = 0;
@@ -53,6 +55,9 @@ public:
 
     // One request line (without LF). False: close the connection.
     bool handle(Session& s, std::string_view line, Sink& out);
+    // The host client went away: held input is released and a macro stops, so nothing stays pressed
+    // without a client (the same idea as a controller-side watchdog).
+    void on_disconnect(const Session& s);
     // One pad-thread step at `now`: returns the state to send and whether the device should be attached.
     bool pad_step(uint64_t now, PadState& want);
     // Polls the application (the network thread calls it every 500 ms and around launch/terminate).
@@ -75,6 +80,8 @@ private:
     bool status(Sink& out);
     bool do_list(const Request& r, Sink& out);
     bool do_file(const Request& r, Sink& out);
+    bool do_records(Sink& out);
+    static constexpr size_t kRecords = 16;
     const char* input_refusal(uint64_t now);
     void root_path(Root r, std::string_view rel, char* out, size_t cap);
     void logf(const char* fmt, ...);

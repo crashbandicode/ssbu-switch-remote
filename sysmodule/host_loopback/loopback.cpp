@@ -57,6 +57,18 @@ public:
         }
         std::fclose(f);
     }
+    // DIR/fake-records: one record per line, "<id hex> <last_event> <last_updated>"; absent = failure.
+    long app_records(AppRecord* out, size_t max) override {
+        FILE* f = std::fopen((g_root + "/fake-records").c_str(), "r");
+        if (!f) return -1;
+        long n = 0;
+        unsigned long long id, upd;
+        unsigned ev;
+        while (size_t(n) < max && std::fscanf(f, "%llx %u %llu", &id, &ev, &upd) == 3)
+            out[n++] = AppRecord{id, uint8_t(ev), upd};
+        std::fclose(f);
+        return n;
+    }
     uint32_t terminate(uint64_t) override { return std::remove((g_root + "/fake-app").c_str()) == 0 ? 0 : 1; }
     void sleep_ms(uint64_t ms) override { usleep(useconds_t(ms * 1000)); }
     bool hdls_attach() override {
@@ -248,7 +260,11 @@ int main(int argc, char** argv) {
         if (ready <= 0) continue;
         if (p[0].revents & POLLIN) accept_into(host_l, host, false, cfg);
         if (p[1].revents & POLLIN) accept_into(scene_l, scene, true, cfg);
-        if (hi >= 0 && p[hi].revents && !pump(host)) close(host.fd), host = Conn{};
+        if (hi >= 0 && p[hi].revents && !pump(host)) {
+            g_service->on_disconnect(host.session);
+            close(host.fd);
+            host = Conn{};
+        }
         if (si >= 0 && p[si].revents && !pump(scene)) close(scene.fd), scene = Conn{};
     }
 }
