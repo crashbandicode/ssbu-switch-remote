@@ -6,7 +6,8 @@
   smoke.py --host IP --out DIR play SEGMENT...    library segments (playbook tools/eden-runner/library), shot after each
   smoke.py --host IP --out DIR step BUTTON [MS]   one tap (route building only), shot after
   smoke.py --host IP --out DIR stick X Y [MS]     one stick push, shot after
-  smoke.py --host IP --out DIR online-check       status + one refused tap (expects inject_refused online_*)
+  smoke.py --host IP --out DIR lan-check          status in a local-wireless lobby: expects a 0x0201xxxx scene, gate allowed
+  smoke.py --host IP --out DIR online-check       status + one refused tap (expects inject_refused online_*; NSO only)
   smoke.py --host IP --out DIR terminate          TERMINATE, then the new crash reports and our logs fetched
   smoke.py --host IP --out DIR bye                RESET, DETACH, BYE (clean disconnect)
 
@@ -98,6 +99,14 @@ class Smoke:
         refused = not r.get('ok') and r['error']['code'] == 'inject_refused'
         return self.receipt('online refusal check', {'ok': refused, 'reply': r})
 
+    def lan_check(self):
+        st = self.c.request('status').get('result', {})
+        mode = int(st.get('scene_mode', '0x0'), 16)
+        ok = (mode & 0x7fff0000) == 0x02010000 and st.get('gate') == 'allowed'
+        return self.receipt('local-wireless check', {'ok': ok, 'scene_mode': hex(mode), 'gate': st.get('gate'),
+                                                      'scene_deluxe': st.get('scene_deluxe'),
+                                                      'scene_age_ms': st.get('scene_age_ms')})
+
     def terminate(self):
         before = {e['name'] for e in (self.c.request('switch.list', {'root': 'crash_reports'}).get('result') or [])}
         self.call('switch.terminate')
@@ -142,6 +151,8 @@ def main(argv=None):
     elif a.cmd == 'stick':
         ms = int(a.args[2]) if len(a.args) > 2 else 250
         s.call('input.stick', {'stick': 'left', 'x': float(a.args[0]), 'y': float(a.args[1]), 'lease_ms': ms})
+    elif a.cmd == 'lan-check':
+        s.lan_check()
     elif a.cmd == 'online-check':
         s.online_check()
     elif a.cmd == 'terminate':

@@ -49,15 +49,33 @@ Python tests therefore drive the real request code end to end.
 ## 2. Online gate: fail closed
 
 Host input reaches the pad only while three things hold: the latest scene report from the NRO is under
-500 ms old, the NRO's guards passed, and the report says offline. Otherwise the input is refused
-(`ERR inject_refused <reason>`), held input is released, and a macro stops with `error=<reason>`.
+500 ms old, the NRO's guards passed, and the report does not name an **internet (NSO) online** scene. Otherwise
+the input is refused (`ERR inject_refused <reason>`), held input is released, and a macro stops with
+`error=<reason>`.
+
+**Local wireless (LDN) is allowed** (operator correction, 2026-11-15 ~23:14Z). It uses no internet service, and
+the game shares its lobby and match paths with NSO online, so TR's room features and Deluxe's local-wireless paths
+are driven on hardware through a local-wireless lobby (the Switch plus one Eden LDN peer).
 
 - **Signal.** The game's mode word is at `main+0x53050f0`. The game's own reader at `main+0x1360928` is
   `adrp; ldr w8,[x8,#0xf0]; and w8,w8,#0x7fff0000; cmp …` (stock 13.0.5 `text.bin`, `tools/find_refs.py`).
-  TrainingRooms calls `0x0701xxxx` the online family (`rc15-integration/src/model/lobby_flag.rs:59-63`). The
-  gate refuses the wider `mode & 0x7f000000 == 0x07000000`, and Online Deluxe's
-  `ssbu_online_deluxe_online_context_v1` ONLINE bit also refuses it
-  (`third_party/deluxe-plugin-sdk/abi/src/lib.rs:105-121`).
+- **The two families can be told apart.** Deluxe classifies the local-wireless room as `0x02010000` and the
+  NSO family as `0x0701xxxx`, ignoring the top bit: Quickplay `0x07010101` in Eden, Elite `0x07010400` on the
+  console (`deluxe-0108/src/auto_policy.rs:171-196`; TR `lobby_flag.rs:59-63` agrees).
+  - The gate refuses `mode & 0x7f000000 == 0x07000000` (`mode_is_online`).
+  - It allows `mode & 0x7fff0000 == 0x02010000` (`mode_is_local_wireless`).
+- **Online Deluxe's ONLINE bit** (`ssbu_online_deluxe_online_context_v1`) is set for local wireless too
+  (deluxe-plugin-sdk `abi/src/lib.rs:112-114`). It refuses only when the mode word is *not* local wireless.
+- **Where the two can't be told apart, the gate fails closed.** Two known cases:
+  - Deluxe says online but the word is in neither family.
+  - The word is stale: Deluxe notes an online word can outlive its session (`auto_policy.rs:189-191`), so
+    local play right after an online session may be refused until the word changes. That costs a false
+    refusal, never an online input, and is reported if it shows up.
+- **One path for both.** The NRO's read, the SCENE line, the Service's gate and the refusal are the same code
+  for local wireless and NSO; only the family test differs. A local-wireless run therefore exercises the whole
+  report path end to end.
+- **Tests.** `local_wireless_allowed_nso_refused` (core) and `test_local_wireless_lobby_allows_input_nso_refuses`
+  (host, against the real Service).
 - **NRO guards.** The version must be `13.0.5`, and the 64 bytes at `main+0x1360928` must be the 13.0.5 bytes.
   Otherwise the report carries `guards=0` and the gate stays closed.
 - **Channel.** The NRO sends `AUTH <token>`, then `SCENE <seq> <mode> <deluxe> <guards>`, to
@@ -157,11 +175,19 @@ The operator plans to block the Switch from the external internet. Nothing here 
 Traffic stays light: the client sends requests only when the runner or an agent acts (no keep-alive loop), and
 screenshots never come from the Switch.
 
-**While the console is blocked, the online-scene rows can't be exercised on it.** The game can't reach its
-online menus; Eden showed the same with an offline profile (error 2306-0520, `eden/sr-nro-01/RESULTS.md`). The
-refusal stays proven by the host tests (`test_online_scene_refuses`,
-`test_macro_refused_mid_play_when_scene_goes_online`). The gate still fails closed whenever the NRO's report is
-missing or stale. No further network hardening is planned beyond the token, private peers and that gate.
+**While the console is blocked, NSO online can't be reached** (Eden showed the same with an offline profile:
+error 2306-0520, `eden/sr-nro-01/RESULTS.md`). **Online-path testing still happens over a local-wireless lobby**,
+which shares its code paths with NSO (operator correction, ~23:14Z). The smoke's online step becomes:
+1. The Switch joins or hosts a local-wireless lobby with one Eden LDN peer (Yoga or XPS, per the ledger), under
+   the playbook's two-PC rules (HARNESS-LESSONS "Two-PC local-wireless rooms"; the host ACCEPTS the guest's
+   request).
+2. STATUS shows a `0x0201xxxx` scene with `gate=allowed`, and an input acts in the lobby.
+3. NSO refusal is shown by code and test, not on the console: `mode_is_online`;
+   `local_wireless_allowed_nso_refused`; `test_local_wireless_lobby_allows_input_nso_refuses`;
+   `test_online_scene_refuses`.
+
+The gate still fails closed whenever the NRO's report is missing or stale. No further network hardening is
+planned beyond the token, private peers and that gate.
 
 ## 7. ns2bench (ruling B.1, evaluated 2026-11-15)
 
@@ -222,6 +248,7 @@ stays host-tested.
 | "it should have a sysmmodule s that you can launch the game yourself and get the logs if it crashes" | sysmodule LAUNCH/TERMINATE/RELAUNCH with the first-tile check; LIST/FILE over crash and plugin logs | `test_launch_only_without_application`, `test_launch_refused_unless_ssbu_is_the_first_tile`, `test_terminate_and_exit_count`, `test_list_and_file_roots` |
 | "for the screenshot part I mean and hardware gifs" | capd recordings with a wall-clock sidecar; GIF cut and encode | `test_gap_counts_missing_frames`, `test_card_no_signal_screen_is_detected`, `test_cut_window_from_sidecar` |
 | "OBS may still be better for the photo/gif part" | OBS primary when it runs (stills, record, replay buffer); capd fallback | `test_finds_the_card_source_and_screenshots`, `test_record_and_replay`, `test_pick_backend_prefers_obs_then_falls_back` |
+| "online testing should still be possible over local wireless lobby. Those paths should be shared with nso path" | gate allows the local-wireless family, refuses NSO, fails closed when ambiguous; one report path for both; smoke over a local-wireless lobby | `test_local_wireless_lobby_allows_input_nso_refuses`, `test_online_scene_refuses` |
 
 ## Open points
 

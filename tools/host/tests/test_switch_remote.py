@@ -166,6 +166,19 @@ class AgainstLoopback(unittest.TestCase):
         r = self.c.request('input.button', {'button': 'a', 'state': 'tap'})
         self.assertEqual(r['error']['message'], 'nro_guards_failed')
 
+    def test_local_wireless_lobby_allows_input_nso_refuses(self):
+        # Local-wireless room word with Deluxe's ONLINE bit (it covers local wireless too): input allowed.
+        self.lb.feed_scene(mode=0x02010000, deluxe=1)
+        r = self.c.request('input.button', {'button': 'a', 'state': 'tap', 'duration_ms': 100})
+        self.assertTrue(r['ok'], r)
+        self.assertEqual(self.c.request('status')['result']['gate'], 'allowed')
+        time.sleep(0.2)
+        self.assertEqual(len(pressed_runs(self.lb.pad(), 0)), 1)
+        # The same session moving to an NSO word (Quickplay 0x07010101) closes the gate on the same report path.
+        self.lb.feed_scene(mode=0x07010101, deluxe=1)
+        r = self.c.request('input.button', {'button': 'a', 'state': 'tap'})
+        self.assertEqual((r['ok'], r['error']['message']), (False, 'online_mode'))
+
     def test_stale_scene_closes_the_gate_and_releases_input(self):
         self.lb.feed_scene()
         r = self.c.request('input.button', {'button': 'b', 'state': 'press', 'lease_ms': 5000})

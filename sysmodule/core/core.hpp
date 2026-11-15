@@ -130,7 +130,12 @@ struct AppRecord {
 // Null when confirmed, else: records_unavailable, first_tile_not_target, first_tile_ambiguous.
 const char* first_tile_check(const AppRecord* records, size_t n, uint64_t target);
 constexpr uint64_t kSsbuProgramId = 0x01006A800016E000ull;
+// Internet (NSO) online: the mode word's 0x07 family (Quickplay 0x07010101, Elite 0x07010400; Deluxe
+// auto_policy.rs:183-196). Refused: the ban risk is there.
 bool mode_is_online(uint32_t mode);
+// Local wireless (LDN): the 0x0201 family (room 0x02010000; Deluxe auto_policy.rs:171-179). Allowed: no internet
+// service is involved, and the game shares these paths with NSO online, so they are tested here (operator 2026-11-15).
+bool mode_is_local_wireless(uint32_t mode);
 Gate gate(const SceneReport& r, uint64_t now, uint64_t freq);
 
 // ---------------------------------------------------------------------------------------------

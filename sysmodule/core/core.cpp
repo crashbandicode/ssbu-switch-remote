@@ -179,13 +179,16 @@ const char* system_sequence_allowed(bool application_running, bool sequence_busy
 // The game's mode word: TrainingRooms treats `mode & 0x7fff0000 == 0x07010000` as the online family
 // (rc15 src/model/lobby_flag.rs:59-63). This refuses the wider 0x07xxxxxx family.
 bool mode_is_online(uint32_t mode) { return (mode & 0x7f000000u) == 0x07000000u; }
+bool mode_is_local_wireless(uint32_t mode) { return (mode & 0x7fff0000u) == 0x02010000u; }
 
 Gate gate(const SceneReport& r, uint64_t now, uint64_t freq) {
     if (!r.valid) return Gate::NoReport;
     if (now < r.received_tick || (now - r.received_tick) * 1000 / freq > kSceneMaxAgeMs) return Gate::Stale;
     if (!r.guards_ok) return Gate::Unguarded;
     if (mode_is_online(r.mode)) return Gate::OnlineMode;
-    if (r.deluxe_online == 1) return Gate::OnlineDeluxe;
+    // Deluxe's ONLINE bit also covers local wireless (deluxe-plugin-sdk abi lib.rs:112-114), so it refuses only
+    // when the mode word does not name local wireless: where the two can't be told apart, fail closed.
+    if (r.deluxe_online == 1 && !mode_is_local_wireless(r.mode)) return Gate::OnlineDeluxe;
     return Gate::Allowed;
 }
 

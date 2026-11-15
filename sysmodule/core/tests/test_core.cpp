@@ -134,8 +134,10 @@ static void gate_fails_closed() {
     CHECK(gate(r, 1000, F) == Gate::OnlineMode);
     r.mode = 0x87010000;  // the high bit is ignored, as in TR's mask
     CHECK(gate(r, 1000, F) == Gate::OnlineMode);
-    r.mode = 0x02010000;  // local family
+    r.mode = 0x02010000;  // local-wireless family: Deluxe's ONLINE bit covers it too, so it no longer refuses
     r.deluxe_online = 1;
+    CHECK(gate(r, 1000, F) == Gate::Allowed);
+    r.mode = 0x01020000;  // a non-local word with Deluxe ONLINE: can't be told apart, refused
     CHECK(gate(r, 1000, F) == Gate::OnlineDeluxe);
     r.deluxe_online = 0;
     CHECK(gate(r, 1000, F) == Gate::Allowed);
@@ -257,6 +259,36 @@ static void first_tile_requires_both_signals() {
     CHECK(r.method == Method::Records);
 }
 
+static void local_wireless_allowed_nso_refused() {
+    SceneReport r;
+    r.valid = true;
+    r.received_tick = 1000;
+    r.guards_ok = true;
+    // Local-wireless room and battle words, with and without Deluxe's ONLINE bit: allowed.
+    for (uint32_t mode : {0x02010000u, 0x02010001u, 0x82010000u}) {
+        r.mode = mode;
+        for (int dx : {-1, 0, 1}) {
+            r.deluxe_online = dx;
+            CHECK(gate(r, 1000, F) == Gate::Allowed);
+        }
+        CHECK(mode_is_local_wireless(mode) && !mode_is_online(mode));
+    }
+    // Every NSO family value refuses, whatever Deluxe says (Quickplay, Elite, arena-like 0x0702, top bit set).
+    for (uint32_t mode : {0x07010101u, 0x07010400u, 0x07010000u, 0x07020000u, 0x87010101u}) {
+        r.mode = mode;
+        for (int dx : {-1, 0, 1}) {
+            r.deluxe_online = dx;
+            CHECK(gate(r, 1000, F) == Gate::OnlineMode);
+        }
+    }
+    // Ambiguous: Deluxe says online but the word is neither family (e.g. an unknown or stale word): refused.
+    r.mode = 0x01000000u;
+    r.deluxe_online = 1;
+    CHECK(gate(r, 1000, F) == Gate::OnlineDeluxe);
+    r.deluxe_online = 0;
+    CHECK(gate(r, 1000, F) == Gate::Allowed);
+}
+
 static void line_buffer() {
     LineBuf<16> b;
     b.put("OK ");
@@ -281,6 +313,7 @@ int main() {
     refuses_bad_requests();
     launch_only_without_application();
     first_tile_requires_both_signals();
+    local_wireless_allowed_nso_refused();
     line_buffer();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
