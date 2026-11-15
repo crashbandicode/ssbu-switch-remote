@@ -18,7 +18,7 @@ TOOLS    := $(DEVKITPRO)/tools/bin
 LIBNX    := $(DEVKITPRO)/libnx
 ARCH     := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CXXFLAGS := -g -O2 -Wall -Wextra -Werror -ffunction-sections -fdata-sections -fno-rtti -fno-exceptions \
-            -std=gnu++17 $(ARCH) -D__SWITCH__ -I$(LIBNX)/include -Icore
+            -std=gnu++17 $(ARCH) -D__SWITCH__ -isystem $(LIBNX)/include -Icore
 LDFLAGS  := -specs=$(LIBNX)/switch.specs -g $(ARCH) -Wl,--gc-sections -Wl,-Map,out/$(NAME).map -L$(LIBNX)/lib
 SRCS     := source/main.cpp core/core.cpp core/service.cpp
 OBJS     := $(patsubst %.cpp,out/obj/%.o,$(SRCS))
