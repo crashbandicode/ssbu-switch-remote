@@ -45,6 +45,7 @@ The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive 
   `tools/card/own_install.py preflight|install <job> --transport ums|mtp --root ...` (receipts, rollback copy,
   readback, before/after table; order in `order.txt`).
 - LAN only (operator, 2026-11-15 ~23:10Z): the console will be blocked from the internet. No hardening beyond the token, private peers and the gate; online-path testing goes over a LOCAL-WIRELESS lobby (Switch + one Eden LDN peer; operator correction ~23:14Z): `smoke.py lan-check` expects a 0x0201xxxx scene with gate allowed; NSO refusal is code+test only. DESIGN.md section 6a.
+- Card r2 (2026-11-15 23:17Z, own_install, UMS): sysmodule exefs.nsp 1ab635cf… → f3fe636a… (c537d5f, local wireless allowed); readback OK, rollback copy ultimate/switch-remote/backups/pre-f3fe636a1cd7bd0f.exefs.nsp, 22 other files unchanged. Receipts: /home/user/smash-training-lobby/artifacts/switch-remote-card/install-r2/. NRO unchanged (1b5391a3…).
 - Console discovery poller: `tools/host/discover.py` in the background (every 120 s since 23:12Z, 2 h), log
   `/home/user/ssbu-switch-remote-work/discover.log`.
 - Eden proof (non-blocking, primary ruling): queued as Yoga user unit `sr-nro-01-queue` (plan `eden/sr-nro-01/`,
