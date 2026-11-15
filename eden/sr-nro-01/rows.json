@@ -1,0 +1,51 @@
+{
+  "game_id": "01006A800016E000",
+  "start": "frontend-ready",
+  "about": "switch-remote NRO Eden proof (2026-11-15): the diag NRO reports the game's mode word over loopback to the sysmodule's host loopback build (real sr::Service) on the Eden host; the gate must be open offline (main menu) and closed in the online menus. One boot, one instance, no input reaches the game from the Service (its virtual controller is a fake there).",
+  "setup": [
+    {"state": "NRO config (token, port 47230)", "via": "fixture", "ref": "files: ultimate/switch-remote/config.txt"},
+    {"state": "Loopback Service listening on 127.0.0.1:47230/47231", "via": "hook", "ref": "queued.ps1 starts sysmodule/out/loopback before Up"},
+    {"state": "Muted, memory_layout_mode 0, GDB stub on before game.load (no-hold)", "via": "hook", "ref": "steps.py:boot_setup, gdb_rc11.py:gdb_kick (rc15 helper copied at run time)"},
+    {"state": "Title to main menu", "via": "segment", "ref": "library attract-cancel"},
+    {"state": "Main menu to online menu to Quickplay menu", "via": "segment", "ref": "library to-online, to-quickplay"}
+  ],
+  "segments": {
+    "attract-cancel": {"library": "attract-cancel"},
+    "to-online": {"library": "to-online"},
+    "to-quickplay": {"library": "to-quickplay"}
+  },
+  "gates": {
+    "frontend-ready": {"library": "frontend-ready"},
+    "loaded": {"library": "loaded"},
+    "main": {"library": "main", "recover": "attract-cancel"},
+    "online-menu": {"library": "online-menu"},
+    "quickplay-menu": {"library": "quickplay-menu"},
+    "sr-installed": {"kind": "log", "source": "diag_log", "whole_file": true, "cap": 120,
+                     "pattern": "plugin=switch-remote/0\\.1\\.0 mode_reader=ok config=ok port=47230 result=installed heap_allocations=\\d+"},
+    "sr-channel": {"kind": "log", "source": "diag_log", "whole_file": true, "cap": 60,
+                   "pattern": "scene_channel connected=true"}
+  },
+  "rows": [
+    {"id": "r00-load", "start": "frontend-ready", "end": "loaded", "budget_min": 4,
+     "steps": [{"run": "steps.py:boot_setup", "check": true},
+               {"call": "game.load", "params": {"path": "@game"}, "job_cap": 240},
+               {"run": "gdb_rc11.py:gdb_kick", "check": true},
+               {"gate": "loaded"}, {"gate": "sr-installed"}, {"gate": "sr-channel"},
+               {"copy": "diag_log", "as": "install"}]},
+    {"id": "r01-title-gate", "start": "loaded", "end": "loaded", "budget_min": 1,
+     "steps": [{"run": "steps.py:scene_gate", "args": {"port": 47230, "token_file": "/home/user/eden-runs/sr-nro-01/sr-test-token", "expect": "allowed", "online": false}},
+               {"shot": "title"}]},
+    {"id": "r02-main-allowed", "start": "loaded", "end": "main", "budget_min": 2,
+     "steps": [{"play": "attract-cancel", "unchecked": true}, {"gate": "main"},
+               {"run": "steps.py:scene_gate", "args": {"port": 47230, "token_file": "/home/user/eden-runs/sr-nro-01/sr-test-token", "expect": "allowed", "online": false}},
+               {"shot": "main"}]},
+    {"id": "r03-online-menu", "start": "main", "end": "online-menu", "budget_min": 2,
+     "steps": [{"gate": "main"}, {"play": "to-online"}, {"gate": "online-menu"},
+               {"run": "steps.py:scene_gate", "args": {"port": 47230, "token_file": "/home/user/eden-runs/sr-nro-01/sr-test-token", "cap_s": 30}},
+               {"shot": "online-menu"}, {"copy": "diag_log", "as": "online-menu"}]},
+    {"id": "r04-quickplay-refused", "start": "online-menu", "end": "quickplay-menu", "budget_min": 2,
+     "steps": [{"gate": "online-menu"}, {"play": "to-quickplay"}, {"gate": "quickplay-menu"},
+               {"run": "steps.py:scene_gate", "args": {"port": 47230, "token_file": "/home/user/eden-runs/sr-nro-01/sr-test-token", "expect": "online_mode", "online": true}},
+               {"shot": "quickplay-menu"}, {"copy": "diag_log", "as": "final"}]}
+  ]
+}
