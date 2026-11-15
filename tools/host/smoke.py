@@ -45,7 +45,7 @@ class Smoke:
                 'reply': reply, 'shot': path}
         with open(self.out / 'receipts.jsonl', 'a') as f:
             f.write(json.dumps(line, default=str) + '\n')
-        print(json.dumps(line, default=str))
+        print(json.dumps(line, default=str), flush=True)
         return reply
 
     def call(self, method, params=None, shot=True):
