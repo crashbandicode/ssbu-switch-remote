@@ -150,7 +150,7 @@ constexpr uint32_t kFileChunkMax = 64 * 1024;
 
 enum class Method : uint8_t {
     Auth, Ping, Status, Button, Stick, Reset, MacroBegin, MacroEvent, MacroPlay, MacroStatus, MacroStop,
-    Launch, Terminate, Relaunch, Dismiss, List, File, Bye,
+    Launch, Terminate, Relaunch, Dismiss, Detach, List, File, Bye,
     Scene,  // scene channel only (from the in-game NRO)
 };
 enum class BtnState : uint8_t { Press, Release, Tap };

@@ -438,6 +438,9 @@ const char* parse_request(std::string_view line, Request& r) {
     } else if (m == "RELAUNCH") {
         if (!want(1)) return err;
         r.method = Method::Relaunch;
+    } else if (m == "DETACH") {
+        if (!want(1)) return err;
+        r.method = Method::Detach;
     } else if (m == "DISMISS") {
         if (!want(1)) return err;
         r.method = Method::Dismiss;

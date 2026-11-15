@@ -195,7 +195,7 @@ static void parses_every_method() {
     CHECK(r.method == Method::MacroBegin && r.n == 3 && r.duration == 72);
     STREQ(parse_request("MEV 1 1 0 0 0 -5", r), nullptr);
     CHECK(r.method == Method::MacroEvent && r.sample.frame == 1 && r.sample.sticks[3] == -5);
-    for (const char* m : {"STATUS", "RESET", "MPLAY", "MSTATUS", "MSTOP", "LAUNCH", "TERMINATE", "RELAUNCH", "DISMISS", "BYE"})
+    for (const char* m : {"STATUS", "RESET", "MPLAY", "MSTATUS", "MSTOP", "LAUNCH", "TERMINATE", "RELAUNCH", "DISMISS", "DETACH", "BYE"})
         STREQ(parse_request(m, r), nullptr);
     STREQ(parse_request("LIST crash_reports", r), nullptr);
     CHECK(r.method == Method::List && r.root == Root::CrashReports && r.text.empty());
