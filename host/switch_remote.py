@@ -163,9 +163,13 @@ class Connection:
 
 class SwitchClient:
     def __init__(self, host, port=DEFAULT_PORT, token=None, capd_socket=DEFAULT_CAPD, timeout=10.0,
-                 screenshot_width=1280, actions_log=None):
+                 screenshot_width=1280, actions_log=None, capture_backend='auto', device='/dev/video4',
+                 obs_factory=None):
         self.conn = Connection(host, port, token or read_token(), timeout)
         self.capd_socket = capd_socket
+        # 'auto': OBS when it runs and has the card as a source (it then holds the V4L2 device), else capd.
+        self.capture_backend, self.device, self.obs_factory = capture_backend, device, obs_factory
+        self.obs, self.obs_retry, self.capture_note = None, 0.0, ''
         self.screenshot_width = screenshot_width
         self.lock = threading.Lock()
         self.actions_log = actions_log
@@ -196,7 +200,29 @@ class SwitchClient:
                 self.conn.open()
             return self.conn.call(line)
 
+    def _backend(self):
+        if self.capture_backend == 'capd':
+            return 'capd'
+        if self.obs is None and time.time() >= self.obs_retry:
+            import obsws
+            kind, value = obsws.pick_backend(self.device, self.obs_factory)
+            if kind == 'obs':
+                self.obs, self.capture_note = value, f'obs source {value.source!r}'
+            else:
+                self.obs_retry, self.capture_note = time.time() + 30, value
+        if self.obs is None and self.capture_backend == 'obs':
+            raise SwitchError('capture_unavailable', self.capture_note)
+        return 'obs' if self.obs else 'capd'
+
     def _capd(self, method, params=None):
+        """A capture call on the chosen backend (the name stays: capd was the first backend)."""
+        if self._backend() == 'obs':
+            import obsws
+            try:
+                return self.obs.handle(method, params or {})
+            except (OSError, obsws.ObsError) as e:
+                self.obs = None
+                raise SwitchError('capture_failed', f'obs: {getattr(e, "code", type(e).__name__)}') from e
         import capd
         try:
             reply = capd.call(self.capd_socket, method, params)
@@ -288,7 +314,9 @@ class SwitchClient:
             out.update({'running': False, 'state': 'unreachable', 'error': str(e)})
         try:
             cap = self._capd('status')
-            out['capture'] = {k: cap.get(k) for k in ('signal', 'frames', 'last_frame_age_ms')}
+            out['capture'] = {k: cap.get(k) for k in ('backend', 'signal', 'frames', 'last_frame_age_ms', 'error')
+                              if cap.get(k) is not None}
+            out['capture'].setdefault('backend', 'capd')
         except SwitchError as e:
             out['capture'] = {'error': str(e)}
         return out
@@ -369,7 +397,7 @@ class SwitchClient:
         if self.recording:
             raise SwitchError('busy', 'a recording is running')
         target = Path(p['path'])
-        mkv = target.with_suffix('.mkv')
+        mkv = target.with_suffix('.mkv')  # capd's file; OBS names its own and reports it on stop
         result = self._capd('recording.start', {'path': str(mkv), 'duration_ms': p.get('duration_ms')})
         self.recording = {'target': target, 'mkv': mkv, 'fps': int(p.get('fps', 10)),
                           'width': int(p.get('width', 640)), 'started_wall': result['started_wall']}
@@ -382,9 +410,11 @@ class SwitchClient:
         self.recording = None
         stop = self._capd('recording.stop')
         import gif
-        info = gif.encode(rec['mkv'], rec['target'], fps=rec['fps'], width=rec['width'])
-        return {'path': str(rec['target']), 'frames': info['frames'], 'dropped_frames': stop['dropped_frames'],
-                'source': str(rec['mkv']), 'first_wall': stop['first_wall'], 'state': 'finished'}
+        source = stop.get('path') or rec['mkv']
+        info = gif.encode(source, rec['target'], fps=rec['fps'], width=rec['width'])
+        return {'path': str(rec['target']), 'frames': info['frames'], 'dropped_frames': stop.get('dropped_frames'),
+                'source': str(source), 'first_wall': stop.get('first_wall'),
+                'approximate_start': bool(stop.get('approximate_start')), 'state': 'finished'}
 
 
 def make_client(socket_string, **kw):

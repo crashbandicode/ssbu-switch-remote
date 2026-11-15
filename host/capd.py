@@ -94,6 +94,18 @@ def frame_stats(jpeg_bytes):
     return size[0], size[1], uniform, is_no_signal(small)
 
 
+def device_error_code(text):
+    """A short code for a v4l2src start failure."""
+    low = text.lower()
+    if 'busy' in low:
+        return 'device_busy (another program, for example OBS, holds the capture card)'
+    if 'no such file' in low or 'cannot identify device' in low:
+        return 'device_missing'
+    if 'permission' in low:
+        return 'device_permission'
+    return 'device_error'
+
+
 def write_png(jpeg_bytes, path, width=None):
     """Decode a JPEG frame and save it as PNG, optionally scaled to `width` (aspect kept)."""
     from PIL import Image
@@ -129,6 +141,13 @@ class Capture:
         self.tee = self.pipeline.get_by_name('t')
         self.pipeline.get_by_name('latest').connect('new-sample', self._on_sample)
         self.pipeline.set_state(Gst.State.PLAYING)
+        # A UVC device normally serves one opener: when OBS holds the card, v4l2src fails here (EBUSY).
+        self.error = None
+        msg = self.pipeline.get_bus().timed_pop_filtered(2 * Gst.SECOND, Gst.MessageType.ERROR)
+        if msg is not None:
+            err, debug = msg.parse_error()
+            self.error = device_error_code(f'{err.message} {debug or ""}')
+            self.pipeline.set_state(Gst.State.NULL)
 
     def _on_sample(self, sink):
         sample = sink.emit('pull-sample')
@@ -143,6 +162,8 @@ class Capture:
         return self.Gst.FlowReturn.OK
 
     def latest_frame(self, max_age=1.0, wait=2.0):
+        if self.error:
+            raise RuntimeError(self.error)
         until = time.monotonic() + wait
         while True:
             with self.lock:
@@ -256,7 +277,8 @@ class Capture:
             if latest:
                 _, _, uniform, no_signal = frame_stats(latest[0])
                 signal = not (uniform or no_signal)
-            return {'device': self.device, 'caps': self.caps, 'frames': self.frames,
+            return {'device': self.device, 'caps': self.caps, 'frames': self.frames, 'error': self.error,
+                    'backend': 'capd',
                     'last_frame_age_ms': None if not latest else round((time.time() - latest[1]) * 1000),
                     'signal': signal, 'recording': self.recording_status()}
         if method == 'ui.screenshot':

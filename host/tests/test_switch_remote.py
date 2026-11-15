@@ -63,7 +63,8 @@ class Loopback:
         self.scene_thread = None
 
     def client(self, **kw):
-        return sr.SwitchClient('127.0.0.1', self.port, TOKEN, capd_socket=str(self.dir / 'capd.sock'), **kw)
+        return sr.SwitchClient('127.0.0.1', self.port, TOKEN, capd_socket=str(self.dir / 'capd.sock'),
+                               capture_backend='capd', **kw)
 
     def feed_scene(self, mode=0x01020000, deluxe=-1, guards=1):
         """Plays the in-game NRO: AUTH, then SCENE lines every 100 ms on port+1. A second call changes the
@@ -133,7 +134,7 @@ class AgainstLoopback(unittest.TestCase):
         self.lb.close()
 
     def test_bad_token_is_refused(self):
-        bad = sr.SwitchClient('127.0.0.1', self.lb.port, 'x' * 20, capd_socket='/nonexistent')
+        bad = sr.SwitchClient('127.0.0.1', self.lb.port, 'x' * 20, capd_socket='/nonexistent', capture_backend='capd')
         r = bad.request('ping')
         self.assertFalse(r['ok'])
         self.assertEqual(r['error']['code'], 'auth')
@@ -342,7 +343,7 @@ class Capture(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             capd = FakeCapd(f'{d}/capd.sock')
             try:
-                c = sr.SwitchClient('127.0.0.1', 1, TOKEN, capd_socket=f'{d}/capd.sock')
+                c = sr.SwitchClient('127.0.0.1', 1, TOKEN, capd_socket=f'{d}/capd.sock', capture_backend='capd')
                 r = c.request('ui.screenshot', {'target': 'switch-capture', 'path': f'{d}/x.png'})
                 self.assertTrue(r['ok'], r)
                 self.assertEqual(capd.calls[-1], ('ui.screenshot', {'path': f'{d}/x.png', 'width': 1280}))
@@ -355,10 +356,11 @@ class Capture(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             capd = FakeCapd(f'{d}/capd.sock')
             try:
-                c = sr.SwitchClient('127.0.0.1', free_port(), TOKEN, capd_socket=f'{d}/capd.sock', timeout=1)
+                c = sr.SwitchClient('127.0.0.1', free_port(), TOKEN, capd_socket=f'{d}/capd.sock', timeout=1,
+                                    capture_backend='capd')
                 s = c.request('status')['result']
                 self.assertEqual((s['running'], s['state']), (False, 'unreachable'))
-                self.assertEqual(s['capture'], {'signal': True, 'frames': 9, 'last_frame_age_ms': 5})
+                self.assertEqual(s['capture'], {'backend': 'capd', 'signal': True, 'frames': 9, 'last_frame_age_ms': 5})
             finally:
                 capd.close()
 

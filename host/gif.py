@@ -1,5 +1,7 @@
 #!/usr/bin/python3
-"""Cut and encode a capture-card recording (MJPEG in Matroska, from capd.py) into a GIF.
+"""Cut and encode a capture-card recording into a GIF: capd.py's MJPEG Matroska (with a per-frame wall-time
+sidecar) or an OBS recording / replay-buffer file (any format GStreamer's decodebin reads; no sidecar, so its
+start time is approximate).
 
 The recording's sidecar (`<mkv>.frames.jsonl`: n, pts, wall per frame) ties frames to host wall time,
 the same clock the client's input log uses, so a clip can start at an observed event.
@@ -68,7 +70,7 @@ def decode(mkv, width):
     from PIL import Image
     Gst.init(None)
     pipe = Gst.parse_launch(
-        f'filesrc location="{mkv}" ! matroskademux ! jpegdec ! videoconvert ! videoscale ! '
+        f'filesrc location="{mkv}" ! decodebin ! videoconvert ! videoscale ! '
         f'video/x-raw,format=RGB,width={width},pixel-aspect-ratio=1/1 ! appsink name=s sync=false')
     sink = pipe.get_by_name('s')
     pipe.set_state(Gst.State.PLAYING)
