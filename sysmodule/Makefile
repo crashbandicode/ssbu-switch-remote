@@ -63,7 +63,7 @@ test: out/loopback
 	g++ -std=c++17 -O1 -Wall -Wextra -Werror -Icore core/core.cpp core/tests/test_core.cpp -o out/test_core
 	./out/test_core
 
-# The host loopback server (host/tests use it).
+# The host loopback server (tools/host/tests use it).
 out/loopback: host_loopback/loopback.cpp core/core.cpp core/service.cpp core/core.hpp core/service.hpp
 	@mkdir -p out
 	g++ -std=c++17 -O1 -Wall -Wextra -Werror -pthread -Icore core/core.cpp core/service.cpp host_loopback/loopback.cpp -o $@

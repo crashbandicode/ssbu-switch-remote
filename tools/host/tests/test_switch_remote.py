@@ -1,5 +1,5 @@
 """The host client against the sysmodule's host loopback build (sysmodule/out/loopback: the real sr::Service
-with a fake platform). Run: make -C sysmodule out/loopback && /usr/bin/python3 -I -m unittest discover -s host/tests"""
+with a fake platform). Run: make -C sysmodule out/loopback && /usr/bin/python3 -I -m unittest discover -s tools/host/tests"""
 import json
 import os
 import shutil
@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 HOST = Path(__file__).resolve().parents[1]
-REPO = HOST.parent
+REPO = HOST.parent.parent
 sys.path.insert(0, str(HOST))
 import switch_remote as sr  # noqa: E402
 

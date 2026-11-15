@@ -1,8 +1,8 @@
 # switch-remote protocol
 
-2026-11-15. The contract between the host client (`host/switch_remote.py`) and the sysmodule
+2026-11-15. The contract between the host client (`tools/host/switch_remote.py`) and the sysmodule
 (`sysmodule/core/service.cpp`), and between the in-game NRO and the sysmodule. Tested on the host
-against the loopback build (`host/tests/test_switch_remote.py`).
+against the loopback build (`tools/host/tests/test_switch_remote.py`).
 
 ## Transport
 

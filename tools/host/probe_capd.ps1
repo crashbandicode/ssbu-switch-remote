@@ -1,9 +1,9 @@
 # Starts capd on the card, measures warm screenshot latency and a 5 s recording, then stops it.
 # Output: evidence/capture-probe/capd-probe.json. Run on the capture host (ubuntu-surface).
-param([string]$Device = '/dev/video4', [string]$Out = "$PSScriptRoot/../evidence/capture-probe")
+param([string]$Device = '/dev/video4', [string]$Out = "$PSScriptRoot/../../evidence/capture-probe")
 $ErrorActionPreference = 'Stop'
 $sock = "/run/user/$(id -u)/switch-remote-capd-probe.sock"
-$shots = "$PSScriptRoot/../shots"
+$shots = "$PSScriptRoot/../../shots"
 New-Item -ItemType Directory -Force $Out, $shots | Out-Null
 $d = Start-Process -FilePath /usr/bin/nice -ArgumentList @('-n', '10', '/usr/bin/python3', '-I', "$PSScriptRoot/capd.py", 'serve', '--device', $Device, '--socket', $sock) -RedirectStandardOutput "$Out/capd-serve.log" -RedirectStandardError "$Out/capd-serve.err" -PassThru
 try {

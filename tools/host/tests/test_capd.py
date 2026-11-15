@@ -1,4 +1,4 @@
-"""Host tests for capd.py's pure parts. Run: /usr/bin/python3 -I -m unittest discover -s host/tests"""
+"""Host tests for capd.py's pure parts. Run: /usr/bin/python3 -I -m unittest discover -s tools/host/tests"""
 import io
 import sys
 import unittest
@@ -8,7 +8,7 @@ HOST = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HOST))
 import capd  # noqa: E402
 
-EVIDENCE = HOST.parent / 'evidence' / 'capture-probe' / 'no-signal-frame.jpg'
+EVIDENCE = HOST.parent.parent / 'evidence' / 'capture-probe' / 'no-signal-frame.jpg'
 
 
 def jpeg(colour=(0, 0, 0), size=(1920, 1080), draw=None):

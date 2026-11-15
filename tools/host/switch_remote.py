@@ -15,7 +15,7 @@ runner (tools/eden-runner/runner.py) drives the console with its existing rows, 
   switch.launch / terminate / relaunch / dismiss / detach / list / file / fetch / raw
                                              -> sysmodule-only methods (DESIGN.md sections 3-4)
 
-The socket string `switch://HOST:PORT` selects this client (playbook-patch/). The token comes from
+The socket string `switch://HOST:PORT` selects this client (playbook-patch/; SWITCH_REMOTE_DIR = tools/host). The token comes from
 SWITCH_REMOTE_TOKEN_FILE (default ~/.config/switch-remote/token) and is never printed or logged.
 CLI: switch_remote.py --host H [--port P] ping|status|shot OUT|press BUTTON [MS]|stick X Y [MS]|
      play FILE|launch|terminate|relaunch|dismiss|list ROOT [DIR]|fetch ROOT PATH OUT|call METHOD [JSON]
