@@ -39,7 +39,15 @@ The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive 
   (`remote-gate.ps1 -Action Clean`, 22:2xZ).
 - Install bundle: `/home/user/ssbu-switch-remote-work/install-r1/` (`sd/` tree + `MANIFEST.json`). The
   token lives only in `~/.config/switch-remote/token` (0600) and the bundle's `config.txt` (0600).
-- Eden proof: BLOCKED on host time. The Yoga has a perf-sensitive calibration (dgs-cal-b2) and the XPS a
+- First install DONE by the primary (2026-11-15 22:19:40Z, add-only, all 5 readbacks OK):
+  `/home/user/smash-training-lobby/artifacts/switch-remote-card/install-r1/INSTALL-RECEIPT.json`. Card free
+  space is 24 GB (my "about 90 GB" read the wrong drive). Later reinstalls of our own files only:
+  `tools/card/own_install.py preflight|install <job> --transport ums|mtp --root ...` (receipts, rollback copy,
+  readback, before/after table; order in `order.txt`).
+- Console discovery poller: `tools/host/discover.py` in the background (every 60 s, 2 h), log
+  `/home/user/ssbu-switch-remote-work/discover.log`.
+- Eden proof (non-blocking, primary ruling): queue ONE Yoga diag boot after deluxe-gamespeed's pair RELEASES.
+- Eden proof was BLOCKED on host time. The Yoga has a perf-sensitive calibration (dgs-cal-b2) and the XPS a
   timed-row Eden; the Surface is excluded. A ruling was requested (Eden slot first, or card install now).
 - Watcher: `/tmp/switch-remote-watcher-81d86844.ps1`, re-armed on each resume (owner = the claude pid).
 
