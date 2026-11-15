@@ -18,7 +18,15 @@
 
 #include "service.hpp"
 
-using namespace sr;
+// libnx has its own global PadState and Service: name ours with sr::, import the rest.
+using sr::AppRecord;
+using sr::Config;
+using sr::kButtonHome;
+using sr::kInjectableMask;
+using sr::kLineMax;
+using sr::Platform;
+using sr::Session;
+using sr::Sink;
 
 extern "C" {
 u32 __nx_applet_type = AppletType_None;
@@ -119,7 +127,7 @@ public:
         attached_ = false;
         log("hdls detached");
     }
-    void hdls_send(const PadState& p) override {
+    void hdls_send(const sr::PadState& p) override {
         if (!attached_) return;
         HiddbgHdlsState s = {};
         s.battery_level = 4;
@@ -180,17 +188,17 @@ private:
 };
 
 NxPlatform* g_platform;
-Service* g_service;
+sr::Service* g_service;
 Config g_cfg;
 
 void pad_thread(void*) {
-    PadState last;
+    sr::PadState last;
     u64 last_tick = 0;
     bool attached = false;
     while (true) {
         svcSleepThread(1'000'000);
         u64 now = armGetSystemTick();
-        PadState want;
+        sr::PadState want;
         bool need = g_service->pad_step(now, want);
         if (need && !attached) {
             attached = g_platform->hdls_attach();
@@ -258,7 +266,7 @@ void accept_into(int lfd, Conn& c, bool scene) {
     int fd = accept(lfd, (sockaddr*)&sa, &len);
     if (fd < 0) return;
     u32 ip = ntohl(sa.sin_addr.s_addr);
-    bool ok = scene ? (ip >> 24) == 127 : peer_allowed(g_cfg, ip);
+    bool ok = scene ? (ip >> 24) == 127 : sr::peer_allowed(g_cfg, ip);
     char line[96];
     if (!ok || c.fd >= 0) {  // one client per channel
         snprintf(line, sizeof line, "%s peer %u.%u.%u.%u refused (%s)", scene ? "scene" : "host", ip >> 24,
@@ -340,7 +348,7 @@ bool load_config() {
     static char text[2048];
     size_t n = fread(text, 1, sizeof text - 1, f);
     fclose(f);
-    if (const char* e = parse_config(std::string_view(text, n), g_cfg)) {
+    if (const char* e = sr::parse_config(std::string_view(text, n), g_cfg)) {
         char line[96];
         snprintf(line, sizeof line, "config invalid: %s", e);
         write_log(line);
@@ -406,7 +414,7 @@ int main(int, char**) {
         svcSleepThread(10'000'000'000ull);
     }
     static NxPlatform platform;
-    static Service service(platform, g_cfg);
+    static sr::Service service(platform, g_cfg);
     g_platform = &platform;
     g_service = &service;
     if (R_SUCCEEDED(threadCreate(&g_pad, pad_thread, nullptr, nullptr, 0x4000, 0x2c, -2))) threadStart(&g_pad);
