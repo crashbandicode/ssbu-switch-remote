@@ -20,7 +20,8 @@ param(
     [string]$GdbHelpers = '/home/user/eden-runs/rc15-integration-35268287-final/rows',
     [double]$WaitHours = 4,
     [int]$Port = 47230,
-    [string]$Display = ':78'
+    [string]$Display = ':78',
+    [switch]$Go   # primary GO: skip the dgs-cal wait (still requires no Eden on the host)
 )
 $ErrorActionPreference = 'Stop'
 $ledger = '/tmp/deluxe-surface-1007/OWNER-COORDINATION.md'
@@ -34,15 +35,16 @@ function Ready {
     $lines = Get-Content $ledger | Where-Object { $_ -match 'dgs-cal' -and $_ -match '\b(CLAIMED|RELEASED):' }
     $last = $lines | Select-Object -Last 1
     $released = (-not $last) -or ($last -match 'RELEASED:')
-    $eden = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*Eden*' -or $_.ProcessName -match '^(eden|AppRun)' }).Count
+    $eden = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*Eden*' -or $_.Path -like '*/.mount_Eden*' }).Count
     return @{ ok = ($released -and $eden -eq 0); last = $last; eden = $eden }
 }
 
-Say "queued: waiting for dgs-cal RELEASED and no Eden (up to $WaitHours h)"
+$script:ledgerAtStart = (Get-Content $ledger).Count
+Say "queued: waiting for dgs-cal RELEASED and no Eden (up to $WaitHours h; Go=$Go)"
 $deadline = (Get-Date).AddHours($WaitHours)
 while ($true) {
     $r = Ready
-    if ($r.ok) { break }
+    if ($r.ok -or ($Go -and $r.eden -eq 0)) { break }
     if ((Get-Date) -gt $deadline) { Say "gave up waiting: last dgs-cal line: $($r.last); eden=$($r.eden)"; exit 3 }
     Start-Sleep -Seconds 60
 }
@@ -91,7 +93,10 @@ $lb = Start-Process -FilePath "$Stage/src/sysmodule/out/loopback" -ArgumentList 
 New-Item -ItemType Directory -Force "$run/loopback-sd" | Out-Null
 Start-Sleep -Seconds 1
 $summary = [ordered]@{ label = $Label; started = (Get-Date -AsUTC -Format o); loopback_pid = $lb.Id }
+# Yield before Up if deluxe-gamespeed's pair announced itself after this script started (primary 2026-11-15 22:57Z).
+function Yield-Needed { @(Get-Content $ledger | Select-Object -Skip $script:ledgerAtStart | Where-Object { $_ -match 'dgs-cal|deluxe-gamespeed' -and $_ -match 'NOTE|CLAIMED' }).Count -gt 0 }
 try {
+    if (Yield-Needed) { Say 'yield: deluxe-gamespeed announced its pair before Up'; $summary.yielded = $true; throw 'yielded' }
     Say 'up'
     & /usr/bin/python3 -I $et up $run *>> $log
     $summary.up = $LASTEXITCODE
@@ -101,9 +106,11 @@ try {
         $summary.run = $LASTEXITCODE
     }
 } finally {
-    Say 'down'
-    & /usr/bin/python3 -I $et down $run *>> $log
-    $summary.down = $LASTEXITCODE
+    if (-not $summary.yielded) {
+        Say 'down'
+        & /usr/bin/python3 -I $et down $run *>> $log
+        $summary.down = $LASTEXITCODE
+    }
     Stop-Process -Id $lb.Id -ErrorAction SilentlyContinue
     $summary.ended = (Get-Date -AsUTC -Format o)
     $summary | ConvertTo-Json | Set-Content "$run/sr-summary.json"

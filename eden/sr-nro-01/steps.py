@@ -38,6 +38,20 @@ def boot_setup(ctx):
     return out
 
 
+def to_main(ctx, tries=10):
+    """Out of the attract loop to the main menu: check the quick main gate, else tap A and look again.
+    (sr-nro-01: one replay of attract-cancel could not leave the demo battle.)"""
+    for i in range(tries):
+        try:
+            ctx.gate('main-quick')
+            return {'main_after_taps': i}
+        except Exception:  # noqa: BLE001 - not there yet
+            ctx.press('a', 120)
+            time.sleep(2.5)
+    ctx.gate('main-quick')
+    return {'main_after_taps': tries}
+
+
 def scene_gate(ctx, port, token_file, expect=None, online=None, cap_s=20):
     """Waits up to cap_s for the loopback Service's gate to read `expect` (e.g. allowed / online_mode).
     expect=None records the gate as it is (a measurement, not an assertion)."""
