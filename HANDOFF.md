@@ -10,6 +10,15 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **~16:10Z SESSION PAUSED for the NVENC encoder change (INBOX 40490).** OBS stopped (finalized), the claim released, SSBU still in
+  Training. Last completed row **SC-02**; next **PF-09** (interrupted mid-row, reruns). **RESUME on the primary's "encoder
+  changed":**
+  1. `/usr/bin/python3 -I /tmp/pb-clip/tools/eden-runner/switch_hw.py up /home/user/smash-training-lobby/artifacts/switch-hw-session-1 --owner switch-hw-session`;
+  2. make sure OBS is recording (obsws status; if inactive, the runner's per-row guard or a start + wait outputActive);
+  3. `/usr/bin/python3 -I /tmp/pb-clip/tools/eden-runner/runner.py run $RB/rows.json --instances <dir>/instances.json --out <dir>/out` (same --out; passed rows skip; `"per_row_files": true` in rows.json);
+  4. `switch_hw.py down` always.
+  - The runner = scratch clone `/tmp/pb-clip` (per-row-clips, ebf4d8e on d77d0b2; the patch in `switch-hw-session-1/playbook-patch/`). The per-row recording-active guard was requested from the clip worker (interrupted; check the clone's git log).
+  - **Mop-up:** PF-06, PF-07 (the Recording TOP seek lands on Combos & Sequences: a systematic bug), FS-57/58/63/66-67/70 + later PENDING-SETUP. The session lane's notes are `switch-hw-session-1/RUN-NOTES.md`.
 - **~15:50Z SESSION RESUME #2 GO (one continuous recording; offline cuts by rec_ms timestamps; per-row OBS split work
   STOPPED).** The session lane holds `artifacts/switch-hw-session-1/` (same --out, from PF-06; fixed `$RB/hooks/tr_page.py`
   keyboard-safe home + preload_clear d77d0b2). Then newest → oldest, then the mop-up (P1 Mario in its own menu visit).
