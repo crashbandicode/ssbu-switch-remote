@@ -27,10 +27,12 @@ from pathlib import Path, PurePosixPath
 
 RUNBOOK = Path('/home/user/smash-training-lobby/artifacts/switch-hw-runbook')
 TR_REPO = Path('/home/user/tr-fixes-20261113/a-full')
-ID = r'[A-Z]+-\d+[A-Za-z]?|F\d\d'
+# EF-<section>-NN: the feature-effect rows (rows-v3, 2026-11-16 refocus on in-game effects)
+ID = r'EF-[A-Z]+-\d+[A-Za-z]?|[A-Z]+-\d+[A-Za-z]?|F\d\d'
 HEAD_RE = re.compile(rf'^###\s+({ID})\s+(.*)$')
 FIELD_RE = re.compile(r'^\s*-\s+\*\*(Class|Code paths|Est|Fixture|Pilot|Covered by|Replaces|Page|Start gate|Release'
-                      r'|Fixture-setup|Fixture-dirty|Needs|Scope|Invalidates|Expected|Verdict|Mode-on):\*\*\s*(.*)$')
+                      r'|Fixture-setup|Fixture-dirty|Needs|Scope|Invalidates|Expected|Verdict|Mode-on'
+                      r'|X-allowed|Known-issue|Cross-ref|Feature):\*\*\s*(.*)$')
 
 
 def load_globs(path):

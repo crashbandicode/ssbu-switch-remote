@@ -282,6 +282,8 @@ def infer_page(row_id, fields):
         page = fields['Page'].replace('`', '').strip()
         return None if page.lower() in ('none', '-', 'n/a') else page
     prefix = row_id.split('-')[0]
+    if prefix == 'EF':  # EF-<section>-NN: the section names the page
+        prefix = row_id.split('-')[1]
     if prefix in PREFIX_PAGE:
         return PREFIX_PAGE[prefix]
     if row_id in PILOT_PAGE:
@@ -701,6 +703,24 @@ KNOWN_ISSUES = {
           'name': r'Break the Targets|Place targets|Eggs-ercise break', 'ids': [f'FS-{n}' for n in range(65, 71)],
           'reason': r'projectile|fireball|break'},
 }
+# The feature-effect plans (rows-v3, --known-issues v3): the operator's six signatures; a row names the ones that may
+# explain its failure with `- **Known-issue:** a, f` (a fixture setup row too). Anything else = FAIL/SETUP-SUSPECT.
+KNOWN_ISSUES_V3 = {
+    'a': {'title': 'P1 and CPU picked in one menu visit: P1 is not the picked fighter',
+          'reason': r'P1|player|portrait|fighter|pick'},
+    'b': {'title': 'Player Swapping shows On but the Cycle Player chord does nothing',
+          'reason': r'Player Swapping|Cycle Player|P1|swap|cycle'},
+    'c': {'title': 'Break the Targets: the camera stays zoomed out after X start',
+          'reason': r'zoom|camera'},
+    'd': {'title': 'Break the Targets: the large timer/marker banner',
+          'reason': r'banner|timer|marker|too (big|large)|size'},
+    'e': {'title': 'Break the Targets: projectiles do not break targets',
+          'reason': r'projectile|fireball|break'},
+    'f': {'title': 'An ordinary CPU Cycle busy refusal shows no "Wait for the character swap to finish" notice',
+          'reason': r'[Ww]ait for the character swap|notice|busy|refus'},
+    'g': {'title': 'Eggs-ercise standing notice stale after start/reset',
+          'reason': r'notice|stale|count|score|eggs|format|reset|restart'},
+}
 EARLY = r'Player (Character|Swapping)|Cycle chord'  # P1-swap rows run right after the baseline (clips for the fix lane)
 EVIDENCE_FILE = 'P1-SWAP-EVIDENCE.md'
 
@@ -741,18 +761,32 @@ X_ALLOWED = {
 }
 
 
-def x_guard(rid, token_lists):
-    """Errors for X presses while the TR menu may be open (X_ALLOWED rows excepted)."""
+def x_guard(rid, token_lists, allowed=''):
+    """Errors for X presses while the TR menu may be open (X_ALLOWED rows, or a row's `- **X-allowed:** <the screen
+    its X acts on>` field, excepted)."""
     flat = [t for line in token_lists for t in line]
     errors = []
     for i, t in enumerate(flat):
         p = t.split()
-        if p[:1] == ['press'] and len(p) == 3 and 'x' in p[1].split('+') and rid not in X_ALLOWED:
+        if p[:1] == ['press'] and len(p) == 3 and 'x' in p[1].split('+') and rid not in X_ALLOWED \
+                and not allowed.strip():
             state = menu_state_before(flat, i)
             if state != 'closed':
                 errors.append(f'{rid}: `{t}` with the TR menu {state} (X saves page defaults); fix the row or list '
                               f'it in X_ALLOWED with the screen its X acts on')
     return errors
+
+
+def known_issue_table_v3(rows):
+    """--known-issues v3: each signature lists the rows whose (or whose chained rows' / fixture setup's)
+    `Known-issue:` field names it."""
+    return {key: {'title': issue['title'], 'reason': issue['reason'],
+                  'rows': sorted(r['id'] for r in rows if key in r.get('known', ()))}
+            for key, issue in KNOWN_ISSUES_V3.items()}
+
+
+def known_letters(fields):
+    return {x for x in re.findall(r'\b([a-g])\b', fields.get('Known-issue', '').lower())}
 
 
 def known_issue_table(rows):
@@ -903,6 +937,9 @@ def main(argv=None):
                          'hooks/start_route.py:from_anywhere: recognise Training / CSS / main / HOME first, then act)')
     ap.add_argument('--early', default=None,
                     help=f'row-name regex run right after the first session row (relaunch: {EARLY!r})')
+    ap.add_argument('--known-issues', choices=['v2', 'v3'], default='v2',
+                    help='v2: the relaunch table (FS ids, row-name families); v3: the six feature-effect signatures '
+                         '(a-g), rows named by their `Known-issue:` field')
     a = ap.parse_args(argv)
     rb = Path(a.runbook)
     rows = rs.load_rows(rb, a.rows_dir)
@@ -1031,6 +1068,7 @@ def main(argv=None):
         out_rows.append({'id': sr_id, 'name': f'fixture {sid}: {s["name"]} (for {rid})', 'covers': [],
                          'start': 'training', 'chained': [], 'fixture': sid,
                          'steps': clean + settle_or_gate() + steps, 'own_from': len(clean) + 1,
+                         'known': known_letters(s['fields']),
                          **({'expected': s['fields']['Expected']} if s['fields'].get('Expected') else {})})
         setup_row[sid] = sr_id
         setup_rows.append(sr_id)
@@ -1062,6 +1100,7 @@ def main(argv=None):
             host['steps'] += steps
             merged[rid] = host['id']
             host.setdefault('modes', set()).update(modes_of(rid, m['fields']))
+            host.setdefault('known', set()).update(known_letters(m['fields']))
             if m['fields'].get('Expected'):
                 host['expected'] = ' | '.join(x for x in (host.get('expected'), f'{rid}: {m["fields"]["Expected"]}')
                                               if x)
@@ -1111,7 +1150,8 @@ def main(argv=None):
             if rid in showcase:  # SESSION.md group "(showcase:NAME)": a mark + showcase.jsonl line as it starts
                 pre.insert(0, {'run': f'{HOOK}:showcase', 'args': {'name': showcase[rid], 'row': rid}})
             row = {'id': rid, 'name': m['name'], 'covers': sorted(covers[rid]), 'start': start, 'chained': [],
-                   'steps': pre + steps, 'modes': set(modes_of(rid, m['fields'])), 'own_from': len(pre)}
+                   'steps': pre + steps, 'modes': set(modes_of(rid, m['fields'])), 'own_from': len(pre),
+                   'known': known_letters(m['fields'])}
             if m['fields'].get('Expected'):
                 row['expected'] = m['fields']['Expected']
             if m['fields'].get('Verdict'):
@@ -1143,10 +1183,10 @@ def main(argv=None):
                 row['steps'].append({'run': f'{CLEAN_HOOK}:mode_off', 'args': {'modes': modes}, 'check': True})
         row['shots'] = labelled_shots(row['steps'], own_from)
     vocab_errors = check_vocabulary(out_rows, b, effect_gates, effect_marks)
-    for rid in run_ids:  # X on an open TR page saves its defaults: refused unless audited (X_ALLOWED)
-        vocab_errors += x_guard(rid, meta[rid]['toks'])
+    for rid in run_ids:  # X on an open TR page saves its defaults: refused unless audited (X_ALLOWED / X-allowed)
+        vocab_errors += x_guard(rid, meta[rid]['toks'], meta[rid]['fields'].get('X-allowed', ''))
     for sid, s in fixtures.items():
-        vocab_errors += x_guard(sid, s['toks'])
+        vocab_errors += x_guard(sid, s['toks'], s['fields'].get('X-allowed', ''))
     if vocab_errors:
         raise SystemExit('effect-gate vocabulary errors:\n  ' + '\n  '.join(vocab_errors))
     boot = dict(BOOT_ROW)
@@ -1177,7 +1217,9 @@ def main(argv=None):
         if name in used:  # only the gates this plan's rows check (a --only plan carries no unused gates)
             plan['gates'][name] = gate
     plan['require_effect'] = True  # runner: a row with no passed effect gate (and no judge PASS) is RAN-UNVERIFIED
-    plan['known_issues'] = known_issue_table(out_rows)
+    plan['known_issues'] = known_issue_table_v3(out_rows) if a.known_issues == 'v3' else known_issue_table(out_rows)
+    for row in out_rows:
+        row.pop('known', None)
     if early:
         p1 = sorted(set(plan['known_issues']['a']['rows']) | set(early))
         plan['evidence_index'] = {EVIDENCE_FILE: {'title': 'P1 swap evidence (known issue a: P1 character swapping '
