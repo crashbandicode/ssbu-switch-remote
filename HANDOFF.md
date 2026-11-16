@@ -10,6 +10,15 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **~12:25Z NEW JOB: FULL HW RUNBOOK** (operator: every TR feature, incl. clean-room ports; then only re-test changed
+  code paths). Dir `/home/user/smash-training-lobby/artifacts/switch-hw-runbook/`: `BRIEF-extract.md` (row format),
+  `rows/{cpu,display-and-controls,fighters-and-stages,recording,saves-and-speed,cross-cutting}.md` + `coverage-eden-rows.md`
+  (6 Sonnet extraction lanes, launched ~12:20Z), `select-all.txt`, `ignore.txt`.
+  - Selector `tools/runbook_select.py <range>` + `tools/tests/test_runbook_select.py` (8 rule tests pass; 3 historical
+    activate when rows exist).
+  - Remaining: when the lanes report, validate the rows (globs exist, parse), assign `- **Session:** S01…` (45-60 min each,
+    by page/fixture), write `RUNBOOK.md`, run the historical tests, post `HW RUNBOOK READY` with the counts
+    HW / PERF-EXCLUDED / NEEDS-ONLINE / NEEDS-2P + sessions. **Don't touch the console** (the pilot lane drives it).
 - **12:13Z PLAN READY posted (INBOX line 38729).** Per the operator, a Sonnet lane executes `PLAN.md` (12 in scope, 8 N/A;
   tools section included); switch-remote-2 only answers stuck points. Console idle on HOME, SSBU selected.
 - **12:05Z NEW JOB: HARDWARE FEATURE LEDGER** (operator: "test that the features work on switch like we did with eden").
