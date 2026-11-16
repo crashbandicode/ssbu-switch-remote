@@ -10,6 +10,15 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **~15:50Z SESSION RESUME #2 GO (one continuous recording; offline cuts by rec_ms timestamps; per-row OBS split work
+  STOPPED).** The session lane holds `artifacts/switch-hw-session-1/` (same --out, from PF-06; fixed `$RB/hooks/tr_page.py`
+  keyboard-safe home + preload_clear d77d0b2). Then newest → oldest, then the mop-up (P1 Mario in its own menu visit).
+  - **Candidate TR product issue:** P1 pick "Character choice expired" when the CPU is picked in the same menu visit
+    (MENU_EPOCH bump), INBOX 40334.
+  - **OBS:** the clip worker enabled manual file splitting (`split_file`) ~15:40Z; harmless; revert per
+    `$RB/OBS-SETTINGS-CHANGE.md` when convenient.
+  - **Stopped/abandoned workers:** the clip worker (stale claim released via `down`), the carry-over worker (rows-v2
+    partial; not used).
 - **~14:55Z LEGEND INSTALLED (INBOX 39952):** TR `de563644` → `80bb1203` (ffd2f74a release), ok/readback True, 20 others
   unchanged; rollback on card `ultimate/switch-remote/backups/pre-80bb12036ce0e0f0.libtraining_rooms.nro` + local
   `card-jobs/l1-tr-legend/before/…`; receipts `artifacts/switch-remote-card/install-l1-tr-legend/`. Console HOME/SSBU.
