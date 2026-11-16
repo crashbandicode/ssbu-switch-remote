@@ -10,7 +10,12 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
-- **~13:00Z PILOT TRIAGE (in progress; no console while the pilot runs):**
+- **12:48Z PILOT TRIAGE + PILOT FIXES READY posted (INBOX line 39022).** The console was handed to harness-lib (ssbu-mod-playbook-6e) ~12:47Z for its proof; switch-remote-2 holds no console.
+  - Fixes doc: `artifacts/switch-hw-ledger-rc15/PLAN-FIX-F04-F07-F08.md` (Eden-exact setups: F04 P1 Olimar via Player Character + reset; F07/F08 Eden `drill-move` taps → 4-step drill; no hit rule).
+  - Launch-1 = erpt **2009-0005** (ldr InvalidNso) at 12:16:15Z; it's not timing. Proposed (needs an OK): a read-only SD read check when the card is next on UMS. 21 other new erpts are WAN noise. Decoder: `/tmp/sr2-erpt.py`.
+  - harness-lib was told: add an "Unable to start software" image gate → close → one relaunch in switch_boot (refs `switch-hw-ledger-rc15/preamble/P0-profile-after-load.png`).
+  - **Operator rule:** PRODUCT FAIL only with the Eden row's exact setup. The integration worker was told to copy Eden setups.
+- **(superseded) PILOT TRIAGE notes:**
   - **F04** = PLAN: Eden's CPU-Olimar row did a Training reset before looking (`final-35268287/runtime-remaining1/rows/article_hurt.py:140-148`, `reset-center`, then 6 native Pikmin); the pilot swapped the CPU without a reset. Fix: `press l+r+a 300` after the swap. Confirm on hardware in the next run.
   - **F07** = PLAN: Make combo makes an input drill only when the macro has inputs and lands no hit (TR `src/model/rr_host.rs:1515-1520`); otherwise EMPTY_COMBO "No combo yet". Macro 1 had swallowed inputs.
   - **F08** = PLAN: record the drill facing away from the CPU.
