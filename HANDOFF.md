@@ -1,6 +1,6 @@
 # HANDOFF: switch-remote (restart-safe)
 
-Written 2026-11-16 ~05:40Z for a fresh session.
+Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log capture + the heap candidate).
 - **Worker:** switch-remote (Claude Opus 5.5, xhigh), spawned by the rc6-integration primary.
 - **History:** the older, longer log is `docs/HANDOFF-history-2026-11-16.md`.
 - **Repo:** `/home/user/ssbu-switch-remote`, branch `main`. No remote; **53 local commits, none pushed**.
@@ -67,6 +67,7 @@ websocket; password from the obs-mcp env, never printed).
 - `pad_wake.py wake|poll|step`: HOME-wake attempts; the console poll rate; latency grabs.
 - `switch_remote.py --backend usb --host /dev/ttyACM0 shot OUT.png`: one still.
 - `homegate.py`: HOME, SSBU-first-tile image gate (refs `tools/host/refs/home-first-tile-ssbu/`).
+- `skyline_tcplog.py --label L`: Skyline's TCP log (172.30.254.79:6969) captured to the evidence root, read-only.
 
 **DBI FTP route** (verified twice: r1 by hand, r2 by replay)
 - **To FTP:** `pad_route.py /home/user/ssbu-switch-remote-work/ftp-r2/route-to-ftp.json`. It starts from HOME with
@@ -145,6 +146,13 @@ Plugins: `atmosphere/contents/01006A800016E000/romfs/skyline/plugins/`.
   - Skyline (2023 `972cdefc` / 2026 `2eb226fa`) initializes sockets before any plugin `main`.
   - Mains run on Skyline's task thread (priority 20, core 3) while the game's main thread waits.
   - r1's main is bounded; its thread (priority 20, below the game main's 16) sleeps 1 s per failed connect.
+- **grok-unstick-2's address validation** (HANG-SUSPECTS-TR.md §Address validation, relayed by the primary ~05:45Z):
+  every TR load-time address is mapped and every guard byte matches, so **the hang is not a bad offset**.
+- **Leading candidate:** the module heap/reservation. TR rc.15 needs **+307 KB file+bss over rc.13**, plus our r1 NRO
+  is new.
+- **Alternative:** something before TR's install line.
+- **Skyline's TCP log** (each LoadModule result with its ro error, each "Running/Finished running `main`") decides
+  between them. It's now captured at every launch (§4a step 0).
 
 ## 4. Morning sequence (after the operator's power cycle; console on HOME)
 
@@ -162,7 +170,12 @@ Plugins: `atmosphere/contents/01006A800016E000/romfs/skyline/plugins/`.
        `--list atmosphere/erpt_reports`;
      - `--list atmosphere/contents/01006A800016E000/exefs` + `--path …/exefs/subsdk9` (**Skyline build**);
      - `--list ultimate/arcropolis` (logs/config);
-     - an SD-root listing for any skyline log.
+     - an SD-root listing for any skyline log;
+     - **the plugin heap size, if a config describes it:** `--list atmosphere/contents/01006A800016E000/romfs/skyline`
+       (anything besides `plugins/`), `--path ultimate/skyline_exefs` (2 entries in the 05:0x listing), and any
+       `nro_hook` config. Search the stage-1 listings for `nro_hook`; `libnro_hook.nro` is plugin `ca7aec03…`.
+     - The **`exefs/subsdk9` sha256** above identifies the Skyline build and its logger: 2023 `972cdefc` = TcpLogger;
+       2026 `2eb226fa` = DualLogger (TCP + kernel log). Neither writes an SD log; TCP 6969 is the log.
    - **Interpretation** (Skyline runs mains in directory order; ours runs before TR's):
      - r1's line present + no new TR line → TR's main stuck.
      - Neither → the hang was at or before r1.
@@ -185,6 +198,15 @@ Plugins: `atmosphere/contents/01006A800016E000/romfs/skyline/plugins/`.
    (every plugin: sha, enabled/disabled); the exact rollback steps.
 
 **4a. Launch procedure (one attempt)**
+0. **Start the Skyline TCP log capture just BEFORE pressing A**, in the background (a harness background task, or
+   `systemd-run --user --unit sr-skylog-<label> /usr/bin/python3 -I …`):
+   `/usr/bin/python3 -I tools/host/skyline_tcplog.py --label <launch-label> --seconds 600`
+   - It connects to `172.30.254.79:6969`, retries every 0.5 s, and reconnects after drops. It appends raw bytes with
+     UTC timestamp headers to `artifacts/switch-remote-card/skyline-tcp-<launch-label>.log`.
+   - Read-only. Stop it (SIGTERM) after the attempt, or let `--seconds` run out.
+   - Use one label per launch, e.g. `b1-try1`, `b2-try1`, `smokeB-try1`.
+   - In the post, quote each `[PluginManager] Loaded/Failed to load …` and `Running/Finished running main …` line,
+     and the last line before the stop.
 1. `pad_nav.py still pre` (gate ok).
 2. `pad_nav.py press a launch --launch-ssbu --confirm-a "<…>" --settle-s 1`.
 3. `pad_watch.py --t0 <press_wall>` until the user selector shows ("Who is using the software?") → `pad_nav.py press
