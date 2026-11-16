@@ -1,32 +1,28 @@
 #requires -Version 7
 <#
-Resumes the parked hardware smoke (primary ruling 2026-11-16, r5 + sys-autopilot fallback):
-read r3's logs read-only, install r5 (WITH boot2.flag) and the sys-autopilot fallback (WITHOUT boot2.flag) through
-the receipt tool, reboot, smoke r5; if r5 does not listen within 2 min, start sys-autopilot from ovlSysmodules and
-smoke through the fallback backend.
+Resumes the parked hardware smoke under option (d) (primary ruling 2026-11-16: sys-autopilot 1.5.0 drives the
+console; our NRO reports scenes to this host; r5 is parked as the fallback).
 
-  /usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase card      # console in UMS or DBI MTP
-  /usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase smoke     # after the reboot
-  /usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase fallback  # after the operator starts sys-autopilot
+  /usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase card    # console in UMS or DBI MTP
+  /usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase smoke   # after reboot + manual start
 
-card:     finds the card (UMS mount, else DBI's MTP storage under gvfs), copies READ-ONLY sysmodule.log, status.txt,
-          events.log, the crash_reports listing and both sysmodules' flags listings into <Out>/before-<time>/, then runs
-          own_install.py preflight + install for each -Jobs folder in order (own files only; receipts in each job
-          folder, copied to the primary's artifacts). Stops at the first failure. Prints the reboot request.
-          The same phase runs the cleanup job later (-Jobs .../cleanup-autopilot-boot2, after its order.txt exists).
-smoke:    waits -WaitMin (2) minutes for r5 on the LAN; found: smoke.py preflight + launch. Not found: prints the
-          switch-over request (operator: ovlSysmodules -> start "sys-autopilot (switch-remote fallback)") and exits 2.
-fallback: waits for sys-autopilot on port 4150, then smoke.py --backend autopilot fallback-check. The client refuses
-          input while our port 47130 answers (one virtual controller at a time).
+card:  finds the card (UMS mount, else DBI's MTP storage under gvfs), copies READ-ONLY sysmodule.log, status.txt,
+       events.log, the crash_reports listing and both sysmodules' flags listings into <Out>/before-<time>/, then runs
+       own_install.py preflight + install for each -Jobs folder (default: the one option-(d) job: ADD sys-autopilot
+       without boot2.flag, REMOVE our sysmodule's boot2.flag, UPDATE NRO + config). Receipts in the job folder and
+       the primary's artifacts. Prints the reboot + manual-start request.
+smoke: starts the scene receiver (user unit sr-scened, scened.py serve) if it is not running, waits for
+       sys-autopilot on port 4150, then smoke.py --backend autopilot: preflight, driver-check (the gate must REFUSE
+       a tap on HOME), launch (HOME -> image-gated still -> A; then the NRO's reports must start and the gate open),
+       lease-check. The rest (play/lan-check/terminate/bye) continues by hand (HANDOFF "Hardware smoke plan").
 Never writes outside switch-remote's allowlist; never mounts or ejects anything.
 #>
 param(
-    [Parameter(Mandatory)][ValidateSet('card', 'smoke', 'fallback')][string]$Phase,
-    [string[]]$Jobs = @('/home/user/ssbu-switch-remote-work/card-jobs/r5-sysmodule-1cda5f7',
-                        '/home/user/ssbu-switch-remote-work/card-jobs/fallback-autopilot-6ca6aac'),
+    [Parameter(Mandatory)][ValidateSet('card', 'smoke')][string]$Phase,
+    [string[]]$Jobs = @('/home/user/ssbu-switch-remote-work/card-jobs/d1-autopilot-1.5.0-nro-3d6e1bb'),
     [string]$Out = '/home/user/ssbu-switch-remote-work/smoke-02',
     [string]$Artifacts = '/home/user/smash-training-lobby/artifacts/switch-remote-card',
-    [int]$WaitMin = 2
+    [int]$WaitMin = 5
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -38,6 +34,7 @@ if ($Phase -eq 'card') {
     foreach ($job in $Jobs) {
         if (-not (Test-Path "$job/order.txt")) { throw "no order.txt in ${job}: the primary writes it when ordering this job" }
         if (Test-Path "$job/install-receipt.json") { throw "$job was already installed; use a new job folder" }
+        if (Test-Path "$job/SUPERSEDED.txt") { throw "$job is superseded: $(Get-Content "$job/SUPERSEDED.txt" -Raw)" }
     }
     $ums = '/run/media/intpa/SWITCH SD'
     $mtp = Get-ChildItem "/run/user/$(id -u)/gvfs" -Directory -ErrorAction SilentlyContinue | Where-Object Name -like 'mtp:host=*DBI*' | Select-Object -First 1
@@ -81,32 +78,29 @@ if ($Phase -eq 'card') {
             Say "$name installed and read back (receipts: $dest)"
         }
     } finally { Pop-Location }
-    Say 'All jobs done. Ask the operator to leave UMS/DBI and REBOOT the console, then run -Phase smoke.'
+    Say 'Done. Ask the operator to: (1) leave UMS/DBI and REBOOT; (2) in ovlSysmodules press A on "sys-autopilot (switch-remote driver)" to start it, then press Y ONCE (A also creates its boot2.flag, which must wait for a later receipted session); (3) leave the console on the HOME menu with SSBU as the first tile. Then run -Phase smoke.'
     exit 0
 }
 
-if ($Phase -eq 'smoke') {
-    Say "waiting up to $WaitMin min for switch-remote r5 on the LAN (port 47130)"
-    & $py -I "$PSScriptRoot/discover.py" --every 20 --until-found ($WaitMin * 60) | Tee-Object -FilePath "$Out/discover.log" -Append
-    $found = (Get-Content "$Out/discover.log" | Select-String '"found": "([0-9.]+)"' | Select-Object -Last 1).Matches.Groups[1].Value
-    if (-not $found) {
-        Say 'r5 NOT listening after the wait. Switch-over (DESIGN.md 11): ask the operator to open ovlSysmodules (Tesla), press A on "sys-autopilot (switch-remote fallback)" to START it, then press Y ONCE to delete the boot2 flag A just created (it must never autostart). Leave switch-remote as it is (not listening = no controller held; A on it would delete its own boot2 flag). Then run -Phase fallback. The next card session: read status.txt/sysmodule.log (r5 diagnosis); -Phase card lists both flags folders.'
-        exit 2
-    }
-    Say "switch-remote at $found"
-    & $py -I "$PSScriptRoot/smoke.py" --host $found --out $Out preflight
-    & $py -I "$PSScriptRoot/smoke.py" --host $found --out $Out launch
-    Say "automatic part done; review $Out/shots and continue with smoke.py --host $found --out $Out (play/step/lan-check/terminate/bye)"
-    exit 0
+# smoke
+$unit = 'sr-scened'
+$active = (& systemctl --user is-active $unit 2>$null)
+if ($active -ne 'active') {
+    & systemd-run --user --unit $unit --collect -p MemoryMax=200M /usr/bin/python3 -I "$PSScriptRoot/scened.py" serve | Out-Null
+    Start-Sleep -Seconds 1
 }
-
-# fallback
-$fb = "$Out/fallback"
-New-Item -ItemType Directory -Force $fb | Out-Null
-Say "waiting up to $([Math]::Max($WaitMin, 5)) min for sys-autopilot on the LAN (port 4150)"
-& $py -I "$PSScriptRoot/discover.py" --backend autopilot --every 20 --until-found ([Math]::Max($WaitMin, 5) * 60) | Tee-Object -FilePath "$fb/discover.log" -Append
-$found = (Get-Content "$fb/discover.log" | Select-String '"found": "([0-9.]+)"' | Select-Object -Last 1).Matches.Groups[1].Value
-if (-not $found) { Say 'sys-autopilot not found either: stop here and report (both drivers silent: a network-level cause is likely)'; exit 2 }
+Say "scene receiver: $(& systemctl --user is-active $unit) ($(& $py -I "$PSScriptRoot/scened.py" status))"
+Say "waiting up to $WaitMin min for sys-autopilot on the LAN (port 4150)"
+& $py -I "$PSScriptRoot/discover.py" --backend autopilot --every 20 --until-found ($WaitMin * 60) | Tee-Object -FilePath "$Out/discover.log" -Append
+$found = (Get-Content "$Out/discover.log" | Select-String '"found": "([0-9.]+)"' | Select-Object -Last 1).Matches.Groups[1].Value
+if (-not $found) {
+    Say 'sys-autopilot not found. Check the ovlSysmodules list (is it running?), then read sd:/config/sys-autopilot logs via UMS. If it cannot run on fw 23.5.0, the parked r5 is the fallback (DESIGN.md 11-12; needs a new order).'
+    exit 2
+}
 Say "sys-autopilot at $found"
-& $py -I "$PSScriptRoot/smoke.py" --backend autopilot --host $found --out $fb fallback-check
-Say "fallback check done; review $fb/shots. Continue by hand with smoke.py --backend autopilot --host $found --out $fb (step/stick/bye). Launching the game stays with the operator in this mode (no first-tile check). REMINDER: the flag A created must be gone (Y once); if not, the staged cleanup job removes it at the next card session. To go back: A on sys-autopilot (stops it), then start ours."
+$sm = @('-I', "$PSScriptRoot/smoke.py", '--backend', 'autopilot', '--host', $found, '--out', $Out)
+& $py @sm preflight
+& $py @sm driver-check
+& $py @sm launch
+& $py @sm lease-check
+Say "automatic part done; review $Out/shots and receipts.jsonl, then continue by hand: smoke.py --backend autopilot --host $found --out $Out play|step|stick|lan-check|terminate|bye"

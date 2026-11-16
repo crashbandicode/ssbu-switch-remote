@@ -1,16 +1,21 @@
 # HANDOFF: switch-remote
 
-Updated 2026-11-16 ~03:30Z. Worker: switch-remote (Opus 5.5, high), session `81d86844-b65c-42b8-bf83-c7b6d7ba2c32`,
+Updated 2026-11-16 ~04:15Z. Worker: switch-remote (Opus 5.5, high), session `81d86844-b65c-42b8-bf83-c7b6d7ba2c32`,
 spawned by the rc6-integration primary. Playbook followed: `ssbu-mod-playbook` `3332c0d`.
 
 ## Objective and scope
 
-The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive Eden. The work has three parts:
-- a sysmodule: input, launch and terminate, logs, and the LAN server;
-- an in-game NRO: the scene reporter for the fail-closed online gate;
-- host capture through OBS (primary) or capd (V4L2 fallback), plus the `switch://` runner backend.
+The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive Eden. Under option (d), adopted
+2026-11-16, the parts are:
+- sys-autopilot 1.5.0 (upstream) for input and files;
+- our in-game NRO as the scene reporter (`scene_host` → this host);
+- the host:
+  - the scene receiver and fail-closed gate (`scened.py`);
+  - the image-gated LAUNCH/TERMINATE (`homegate.py`);
+  - the `autopilot://` driver;
+  - capture through OBS (primary) or capd.
 
-`DESIGN.md` (revision 3) is the design, with the rulings recorded in it.
+Our sysmodule (r5) is parked as the fallback. `DESIGN.md` (revision 4, §12) is the design.
 
 ## Rulings received (2026-11-15)
 
@@ -28,19 +33,33 @@ The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive 
   - Resume plan: r3 logs, then install r5 and the fallback, reboot, smoke r5, and switch to the fallback if r5
     doesn't listen within 2 min.
   - Post the CARD INSTALL REQUEST table first. No card actions now; the console is parked.
+- **ADOPT option (d) (primary ruling 2026-11-16 ~04:0xZ; supersedes the r5 + fallback message, which crossed):**
+  - sys-autopilot 1.5.0 drives; r5 is PARKED as the fallback.
+  - LAUNCH re-ruling APPROVED: host-side HOME→A only with no fresh scene report AND a still with SSBU as the HOME
+    first tile (reviewed image gate). TERMINATE is HOME→X→A with a still check.
+  - Residual gate risk ACCEPTED: the sys-autopilot token bypasses the host gate; the token stays host-only and the
+    console is internet-blocked.
+  - First install WITHOUT sys-autopilot's boot2.flag: start it by hand in ovlSysmodules, and add the flag later in
+    a receipted session once it has served `/status`.
+  - The card session: read r3's logs; ADD sys-autopilot (no flag); REMOVE our `boot2.flag`; UPDATE the NRO and
+    config (`scene_host`); reboot; the operator starts it once.
+  - Post the final exact table when the host work is done, then END.
 
 ## State
 
 - Branch `main`, no remote, nothing pushed or tagged; HEAD is the latest commit (`git log -1`).
-- NRO gates: green on `e2e802a` (Yoga, `remote-gate.ps1`): test 21/0, clippy 0, ndf 0, release and diag
-  36,864 B each. Release sha256 `1b5391a3b17318d01b6ef1fe32f5ec5683566447804727afa031e9ede3806ace`. The NRO
-  source is unchanged since. Artifacts: `/home/user/ssbu-switch-remote-work/gates/e2e802a/`.
+- NRO 0.2.0 (`scene_host`): gates green on `3d6e1bb` (Yoga, `remote-gate.ps1`, 2026-11-16 03:3xZ):
+  - test 22/0, clippy 0, ndf 0;
+  - release 36,864 B, sha256 `d4581396f2133e630ee2b4c34bf8722020fcb357d4024efb756f813fe35e24ba`;
+  - diag `c9d7ad10…`;
+  - artifacts in `/home/user/ssbu-switch-remote-work/gates/3d6e1bb/`; the lane was cleaned.
+  - On the card now: r1's NRO `1b5391a3…` (0.1.0, loopback only).
 - Sysmodule: built on the Yoga at `39ebc14` (`tools/build_sysmodule.ps1`). exefs.nsp is 142,484 B, sha256
   `1ab635cf9398d2a19bdd3b90cf808d3ffa03332299eea6d886c7ad25bf73c93b`; the image is 1.38 MiB. Artifacts:
   `/home/user/ssbu-switch-remote-work/sysmodule/39ebc14/`. A later commit that only moved host files needs no
   rebuild (`sysmodule/` unchanged except the Makefile comment).
-- Host: 61 tests OK (`/usr/bin/python3 -I -m unittest discover -s tools/host/tests`, after
-  `make -C sysmodule out/loopback`); card tool 16 OK (`-s tools/card/tests`). Core: 239 checks (2026-11-16 ~03:25Z).
+- Host: 95 tests OK (`/usr/bin/python3 -I -m unittest discover -s tools/host/tests`, after
+  `make -C sysmodule out/loopback`); card tool 16 OK (`-s tools/card/tests`). Core: 240 checks (2026-11-16 ~04:10Z).
 - Capture card: `/dev/video4` works, but there is no signal yet: the console is in hekate UMS, mounted
   read-only for us at `/run/media/intpa/SWITCH SD`. OBS 32.2.0 (snap) is installed but not running.
 - Ledger: no open claims of ours. The first sysmodule build left `bid=cb1efd13` open; it was released by hand.
@@ -72,59 +91,59 @@ The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive 
 The sysmodule was not listening (console at HOME, IP 172.30.254.53). Static review: `docs/SMOKE-01-REVIEW.md`.
 Probable root cause: the listener was bound before DHCP. r4 (`9d8a027`, self-diagnosing) is superseded by r5.
 
-## r5 + sys-autopilot fallback (ruled 2026-11-16; built, staged, NOT installed)
+## Option (d): staged, NOT installed (ruled 2026-11-16)
 
-- **r5** = sysmodule 0.3.0, `1cda5f7`. exefs.nsp 158,967 B, sha256
-  `b4f634a8cc94a3ab84b2d55021b9c3fd62af335fb4e4799b67341750102ccc13`, `check_nsp` ok. It adds an IP-change
-  listener rebuild, PSC sleep/wake and default socket sizes (DESIGN.md §11, attribution in `docs/PROVENANCE.md`).
-  - Job `card-jobs/r5-sysmodule-1cda5f7`: exefs replaced; toolbox and boot2.flag stay `unchanged` if present.
-  - Dry run on a copy of r3's files: OK.
-- **Fallback** = sys-autopilot from `6ca6aac`, built by `tools/build_autopilot.ps1` (Yoga).
-  - `sys-autopilot.nsp` 238,539 B, sha256 `ea5dfc674f7eb528f331f14a6d6c423358aa15493d8b481f4c1732044e71ff68`.
-  - Job `card-jobs/fallback-autopilot-6ca6aac`:
-    - exefs.nsp;
-    - our toolbox.json (118 B, `ba5797d8…`, requires_reboot false);
-    - `config/sys-autopilot/config.ini` (1,081 B, our token, `log = true`, 0600);
-    - NO boot2.flag.
-  - Dry run OK.
-- **Backstop job** `card-jobs/cleanup-autopilot-boot2`: a `remove.txt` for sys-autopilot's boot2.flag. It has
-  no order.txt, so it is refused until the primary orders it.
+- **Card job** `card-jobs/d1-autopilot-1.5.0-nro-3d6e1bb` (one session; `order.txt` = the ruling). Dry run on a
+  fake card mirroring today's state (r1 NRO/config, r3 sysmodule files and flag, another plugin): all readbacks OK,
+  the other files unchanged.
+
+  | Destination | Action | Bytes | sha256 |
+  | --- | --- | --- | --- |
+  | atmosphere/contents/4200000000004150/exefs.nsp | add (sys-autopilot 1.5.0 release) | 233,732 | b132156a53fd9c05e35b87a58502f5a7320376301dd7186c9bbc72ed33d14ea8 |
+  | atmosphere/contents/4200000000004150/toolbox.json | add (ours: "sys-autopilot (switch-remote driver)", requires_reboot false) | 107 | a9b941165287295b5e7b6f06e22353eaac394566144d6bd261dde31d8b1f340f |
+  | config/sys-autopilot/config.ini | add (release default + our token + `log = true`; 0600) | 1,081 | (secret) |
+  | atmosphere/contents/4200000000005352/flags/boot2.flag | REMOVE (our sysmodule no longer autostarts) | 0 | e3b0c442… |
+  | atmosphere/contents/01006A800016E000/romfs/skyline/plugins/libssbu_switch_remote.nro | replace 1b5391a3… (rollback copy on card) | 36,864 | d4581396f2133e630ee2b4c34bf8722020fcb357d4024efb756f813fe35e24ba |
+  | ultimate/switch-remote/config.txt | replace (same keys + `scene_host=172.30.254.66`; rollback copy) | 200 | (secret) |
+  | atmosphere/contents/4200000000004150/flags/boot2.flag | NOT written | | |
+
+- **Later job** `card-jobs/d2-autopilot-boot2`: sys-autopilot's boot2.flag only, after it has served `/status`.
+  It has no order.txt.
+- **Superseded jobs** (marked `SUPERSEDED.txt`): r4, r5, fallback-autopilot-6ca6aac and cleanup-autopilot-boot2.
+- **First start:** ovlSysmodules **A then Y once**. A also creates the boot2.flag (`gui_main.cpp:96-100`), and Y
+  deletes it.
 - **Host:**
-  - `tools/host/autopilot.py` (`autopilot://`, `--backend autopilot`): host-side leases, refuses `two_drivers`
-    while port 47130 answers, HOME/CAPTURE refused, `macro.*`/`switch.*` unsupported.
-  - `discover.py --backend autopilot`; `smoke.py --backend autopilot fallback-check`.
-  - `own_install.py`: autopilot allowlist plus a receipted `remove.txt`.
-  - The runner patch routes `autopilot://` too.
-- **Switch-over** (DESIGN.md §11, from ovl-sysmodules `gui_main.cpp:75-114`):
-  - A on a running module kills it and deletes its flag; A on a stopped one starts it and creates the flag; Y
-    only toggles the flag.
-  - So: stop ours with `switch_remote.py shutdown` (not A); start sys-autopilot with A, then **Y once**.
-- **Resume** (`tools/host/resume_smoke.ps1`):
-  1. `-Phase card` (UMS/DBI): r3 logs and both flags listings read-only, then the r5 job and the fallback job.
-  2. The operator reboots.
-  3. `-Phase smoke`: 2 min for r5.
-  4. If r5 isn't there: the operator does A + Y on sys-autopilot, then `-Phase fallback`.
+  - `scened.py` (receiver + gate, TCP 47131, unix socket; user unit `sr-scened` started by the resume script).
+  - `homegate.py` (refs `tools/host/refs/home-first-tile-ssbu/`, reviewed by me; the primary's countersignature
+    is pending).
+  - `autopilot.py`:
+    - gated input with a watchdog, and host leases;
+    - host-timed macros (`late_ms_max`);
+    - launch/terminate/relaunch;
+    - list/file/fetch.
+  - `switch_test.py --backend autopilot` (the default) and `smoke.py --backend autopilot driver-check|lease-check`.
+- **The host IP:** `172.30.254.66` is a static secondary address on the Surface's wired NIC. ufw is off.
 
 ## Hardware smoke plan (in order)
 
-1. Discovery finds the console; `smoke.py preflight` (status, capture, records, crash listing).
-2. `smoke.py launch` (first-tile check) → SSBU running, scene report, `gate=allowed`.
+Option (d): every step runs with `--backend autopilot`; `resume_smoke.ps1 -Phase smoke` runs 0-2 and the lease check.
+0. `driver-check`: sys-autopilot answers, and a tap on HOME is REFUSED (`no_scene_report`): the gate fails closed.
+1. Discovery finds the console; `smoke.py preflight` (status, capture, crash listing).
+2. `smoke.py launch` (HOME → image gate → A) → the NRO's reports arrive at the host, `gate=allowed`.
 3. Library segments to the character select; single steps to Training and back (shot after each).
 4. Local-wireless lobby with one Eden LDN peer (two-PC rules; the host accepts the guest): `smoke.py lan-check`.
-5. ovlSysmodules: toggle switch-remote OFF with the controller attached (does the virtual pad vanish? check the
-   controllers screen with a capture), then ON; the client reconnects with no reboot.
-6. Update without a reboot: `switch.update` a new `sysmodule.exefs` (`restart`), check STATUS from the new
-   instance; `nro` update + `RELAUNCH`, check the install line in `ultimate/switch-remote/events.log`.
-7. `smoke.py terminate` (crash-report and log fetch), `smoke.py bye`.
+5. ovlSysmodules: stop sys-autopilot with the controller attached (does the virtual pad vanish? check the
+   controllers screen with a capture), then A + Y to start it again; the client reconnects with no reboot.
+6. `smoke.py terminate` (HOME → still → X → still → A; crash-report and log fetch), `smoke.py bye`.
+7. Then the later d2 session (sys-autopilot's boot2.flag), on a new order.
 
 ## Next commands
 
-1. When the operator is back: post the CARD INSTALL REQUEST table (r5 job + fallback job, with sha256) to the
-   primary's INBOX, then END and wait for the order.
+1. The CARD INSTALL REQUEST (table above) is posted to the INBOX; wait for the order (END).
 2. On the order, with the console in UMS or DBI MTP:
    `/usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase card`.
-3. The operator reboots. Then `... resume_smoke.ps1 -Phase smoke`. If it exits 2, the operator does A then Y on
-   "sys-autopilot (switch-remote fallback)" in ovlSysmodules, then `... -Phase fallback`.
+3. The operator reboots, presses A then Y on "sys-autopilot (switch-remote driver)" in ovlSysmodules, and leaves
+   the HOME menu with SSBU first. Then run `... resume_smoke.ps1 -Phase smoke`.
 4. Then the hardware smoke plan above. The local-wireless step needs an Eden ldn_mitm peer (pending).
 
 ## Checklist (playbook `docs/CHECKLIST.md`)
@@ -133,7 +152,7 @@ Probable root cause: the listener was bound before DHCP. r4 (`9d8a027`, self-dia
 | --- | --- | --- |
 | cdylib only; release profile; skyline =0.6.0; toolchain 1.98.1 | M | pass (compliance) |
 | model.rs host tests / runtime cfg(switch) | M | pass |
-| Gates: test, clippy -D warnings, ndf, skyline release, diag | M | pass (`e2e802a`) |
+| Gates: test, clippy -D warnings, ndf, skyline release, diag | M | pass (`3d6e1bb`, NRO 0.2.0) |
 | No heap in hooks / counting allocator | M | pass: no hooks; `heap_allocations` in the install line |
 | Fixed buffers, thread on a static stack | M | pass (`src/runtime.rs`) |
 | Root cause / workarounds approved | M | pass: none shipped |

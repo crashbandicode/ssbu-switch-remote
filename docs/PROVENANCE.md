@@ -29,16 +29,21 @@ The game facts (mode word `main+0x53050f0`, guard `main+0x1360928`) come from th
 | skyline (crate) | =0.6.0 | MIT | The NRO's plugin runtime |
 | GStreamer, obs-websocket v5 | system | LGPL / GPL (separate processes) | Capture, through their CLIs and protocols |
 
-## The sys-autopilot binary (fallback driver)
+## The sys-autopilot binary (the console driver, option d)
 
-Per the primary ruling of 2026-11-16, sys-autopilot is kept as a FALLBACK console driver (DESIGN.md §11):
-- **Build.** `tools/build_autopilot.ps1` builds it unmodified from the pinned source `6ca6aac` on the Yoga. The
-  output, recorded in `build.json`, is `sys-autopilot.nsp` 238,539 B, sha256
-  `ea5dfc674f7eb528f331f14a6d6c423358aa15493d8b481f4c1732044e71ff68`.
-- **Internal use only.** It is staged for the operator's own console and is **not redistributed**, and nothing
-  of it is in this repository.
-- **License.** Because it has no LICENSE file, no redistribution is planned. If one were ever needed, the
-  license question goes to the operator first.
+Per the primary ruling of 2026-11-16 (ADOPT option d), sys-autopilot 1.5.0 drives the console (DESIGN.md §12):
+- **Binary installed.** The upstream release: zip `sys-autopilot-1.5.0.zip` (sha256 `a409ee7d…`), whose
+  `exefs.nsp` is 233,732 B, sha256 `b132156a53fd9c05e35b87a58502f5a7320376301dd7186c9bbc72ed33d14ea8`. It is kept
+  read-only in `/home/user/ref/sys-autopilot-1.5.0`.
+- **Our own build.** `tools/build_autopilot.ps1` built `6ca6aac` (a CI-only commit after the 1.5.0 release) as a
+  reference: 238,539 B, sha256 `ea5dfc674f7eb528f331f14a6d6c423358aa15493d8b481f4c1732044e71ff68`. It is not
+  installed.
+- **Internal use only.** It runs on the operator's own console and is **not redistributed**, and nothing of it is
+  in this repository.
+- **License.** Because it has no LICENSE file, no redistribution is planned. If one were ever needed, the license
+  question goes to the operator first.
 - **Our files beside it.** We supply only our own files: `toolbox.json` (`requires_reboot: false`) and a
-  `config.ini` holding our token. The host backend `tools/host/autopilot.py` speaks its documented REST API
-  (README "REST API"). Its test server `tools/host/tests/test_autopilot.py` is written from that README section.
+  `config.ini` holding our token (the release default otherwise).
+- **Host side.** `tools/host/autopilot.py` speaks its documented REST API (README "REST API" and "Files"). The
+  fake server in `tools/host/tests/test_autopilot.py` is written from that README. The gate (`scened.py`), the
+  image gate (`homegate.py`, references cut from our own capture) and the sequences are this project's code.

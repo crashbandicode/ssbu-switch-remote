@@ -1,27 +1,33 @@
 # switch-remote
 
 Drive a physical Nintendo Switch running Super Smash Bros. Ultimate 13.0.5 the way test agents drive the
-Eden emulator. An Atmosphere sysmodule presents a virtual Pro Controller and can launch, terminate and
-recover the game and read its crash logs over the LAN. A small Skyline plugin tells the sysmodule whether
-the game is offline, and remote input is refused unless it is. The HDMI capture card on the host provides
-the screenshots and clips, through OBS when it runs and GStreamer otherwise. The playbook's Eden runner can
-target the console with `switch://HOST:PORT` (see `DESIGN.md`).
+Eden emulator. [sys-autopilot](https://github.com/TooTallNate/sys-autopilot) 1.5.0 presents a virtual Pro
+Controller over the LAN. A small Skyline plugin reports to this host whether the game is offline, and the host
+client refuses remote input unless it is. The host also launches and terminates the game through image-checked
+HOME-menu sequences and reads crash logs. The HDMI capture card on the host provides the screenshots and clips,
+through OBS when it runs and GStreamer otherwise. The playbook's Eden runner can target the console with
+`autopilot://HOST` (see `DESIGN.md` §12). This repository's own sysmodule (`sysmodule/`) is parked as the
+fallback (`switch://HOST:PORT`, §11).
 
 > **Disclaimer:** this project was developed with the assistance of AI
 > (Claude, Codex and other coding agents) under the operator's direction and
 > review. Nothing is claimed beyond the dated tests cited below.
 
-**Status, 2026-11-15:** host-tested only. Nothing has run on a console yet, and there is no GIF until the
+**Status, 2026-11-16:** host-tested only. Nothing has run on a console yet, and there is no GIF until the
 first hardware smoke records one (docs/media is empty).
 
 ## Install (SD card)
 
 - `atmosphere/contents/01006A800016E000/romfs/skyline/plugins/libssbu_switch_remote.nro` (the scene reporter)
-- `atmosphere/contents/4200000000005352/{exefs.nsp,toolbox.json,flags/boot2.flag}` (the sysmodule)
-- `ultimate/switch-remote/config.txt`, with `token=<16-64 characters>`. Without it, neither part listens or
-  injects.
+- `ultimate/switch-remote/config.txt`, with `token=<16-64 characters>` and `scene_host=<the host's LAN IPv4>`.
+  Without it, the plugin does nothing.
+- sys-autopilot 1.5.0: `atmosphere/contents/4200000000004150/exefs.nsp` (the upstream release) plus a
+  `toolbox.json` with `"requires_reboot": false`, and `config/sys-autopilot/config.ini` with the same token. Start
+  it from ovlSysmodules (A, then Y to keep it from autostarting until it is proven on your firmware).
+- On the host: `tools/host/scened.py serve` (the scene receiver and gate, TCP 47131).
 
-To remove the sysmodule: delete `atmosphere/contents/4200000000005352/` (from hekate UMS if the console won't boot).
+To remove sys-autopilot: delete `atmosphere/contents/4200000000004150/` (from hekate UMS if the console won't
+boot).
 
 ## Build
 
@@ -45,7 +51,9 @@ tools/host/capd.py serve                             # capture fallback when OBS
 tools/host/switch_remote.py --host 172.30.254.92 status
 tools/host/switch_remote.py --host 172.30.254.92 shot now.png
 tools/host/switch_test.py run eden/rows.json --host 172.30.254.92 --mirror diag_log=ultimate:<plugin>/events.log
-tools/host/switch_remote.py --backend autopilot --host 172.30.254.92 status   # the sys-autopilot fallback
+tools/host/scened.py serve &                                                # scene receiver + gate
+tools/host/switch_remote.py --backend autopilot --host 172.30.254.53 status   # the driver (option d)
+tools/host/switch_remote.py --backend autopilot --host 172.30.254.53 launch   # HOME -> image gate -> A
 ```
 
 Protocol: `docs/PROTOCOL.md`. Restrictions: `docs/RESTRICTIONS.md`.
@@ -55,5 +63,5 @@ Protocol: `docs/PROTOCOL.md`. Restrictions: `docs/RESTRICTIONS.md`.
 MIT (`LICENSE`). No code is copied from the projects that were studied (sys-autopilot, sys-botbase, ldn_mitm,
 ovl-sysmodules, Atmosphere, ns2bench). libnx (ISC) is linked. Details and attributions: `docs/PROVENANCE.md`.
 
-The sys-autopilot fallback driver (`tools/host/autopilot.py`, DESIGN.md §11) is built from its pinned source for
-internal use and is not redistributed.
+sys-autopilot (the console driver, DESIGN.md §12) is installed from its upstream 1.5.0 release for internal use; it is
+not part of this repository and is not redistributed.

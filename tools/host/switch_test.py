@@ -1,8 +1,11 @@
 #!/usr/bin/python3
 """Run playbook runner rows against the physical Switch.
 
-  switch_test.py preflight --host IP [--port P]
-  switch_test.py run ROWS.json --host IP [--port P] [--out DIR] [--mirror KEY=ROOT:PATH ...] [--playbook DIR]
+  switch_test.py preflight --host IP [--port P] [--backend autopilot|switch]
+  switch_test.py run ROWS.json --host IP [--port P] [--backend autopilot|switch] [--out DIR] [--mirror KEY=ROOT:PATH ...]
+                 [--playbook DIR]
+
+--backend autopilot (option d, DESIGN.md 12; needs scened.py serve) drives sys-autopilot; switch = the parked sysmodule.
 
 `run` writes DIR/instances.json with one instance, `switch`, whose socket is `switch://IP:PORT`, and runs
 the unchanged playbook runner (tools/eden-runner/runner.py) in this process with one shared SwitchClient:
@@ -75,8 +78,17 @@ def parse_mirror(spec):
     return key, root, path
 
 
-def instances_for(host, port, out, mirrors):
-    inst = {'socket': f'switch://{host}:{port}', 'screenshot_target': 'switch-capture', 'backend': 'switch'}
+def make(args, **kw):
+    if args.backend == 'autopilot':
+        import autopilot
+        return autopilot.AutopilotClient(args.host, args.port or autopilot.AUTOPILOT_PORT,
+                                         sr.read_token(args.token_file), capd_socket=args.capd, **kw)
+    return sr.SwitchClient(args.host, args.port or sr.DEFAULT_PORT, sr.read_token(args.token_file), args.capd, **kw)
+
+
+def instances_for(host, port, out, mirrors, backend='switch'):
+    scheme = 'autopilot' if backend == 'autopilot' else 'switch'
+    inst = {'socket': f'{scheme}://{host}:{port}', 'screenshot_target': 'switch-capture', 'backend': 'switch'}
     for key, root, path in mirrors:
         inst[key] = str(out / 'mirror' / f'{key}.log')
     return {'switch': inst}
@@ -97,10 +109,10 @@ def run(args):
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     mirrors = [parse_mirror(m) for m in args.mirror]
-    client = sr.SwitchClient(args.host, args.port, sr.read_token(args.token_file), args.capd,
-                             actions_log=str(out / 'switch-actions.jsonl'))
+    client = make(args, actions_log=str(out / 'switch-actions.jsonl'))
+    port = args.port or (4150 if args.backend == 'autopilot' else sr.DEFAULT_PORT)
     inst_path = out / 'instances.json'
-    inst_path.write_text(json.dumps(instances_for(args.host, args.port, out, mirrors), indent=1) + '\n')
+    inst_path.write_text(json.dumps(instances_for(args.host, port, out, mirrors, args.backend), indent=1) + '\n')
     threads = [Mirror(client, root, path, out / 'mirror' / f'{key}.log') for key, root, path in mirrors]
     for t in threads:
         t.start()
@@ -112,6 +124,8 @@ def run(args):
     finally:
         for t in threads:
             t.stop.set()
+        if hasattr(client, 'close'):
+            client.close()  # autopilot: release everything (sys-autopilot has no lease of its own)
         client.conn.close()
 
 
@@ -121,7 +135,8 @@ def main(argv=None):
     for name in ('preflight', 'run'):
         p = sub.add_parser(name)
         p.add_argument('--host', required=True)
-        p.add_argument('--port', type=int, default=sr.DEFAULT_PORT)
+        p.add_argument('--port', type=int)
+        p.add_argument('--backend', choices=['autopilot', 'switch'], default='autopilot')
         p.add_argument('--token-file')
         p.add_argument('--capd', default=sr.DEFAULT_CAPD)
         if name == 'run':
@@ -131,7 +146,7 @@ def main(argv=None):
             p.add_argument('--playbook', default=str(DEFAULT_PLAYBOOK))
     a = ap.parse_args(argv)
     if a.cmd == 'preflight':
-        client = sr.SwitchClient(a.host, a.port, sr.read_token(a.token_file), a.capd)
+        client = make(a)
         report = preflight(client)
         print(json.dumps(report))
         return 0 if report['ready'] else 1

@@ -1,0 +1,46 @@
+{
+  "source": "ssbu-switch-remote-work/smoke-01/shots/000-now.png (OBS source \"Switch\", HOME menu, 2026-11-16 01:3xZ); test copy tools/host/tests/data/home-ssbu-first-tile.jpg",
+  "source_sha256": "d3719bb44f57aa1ae08010882c0c3714128da9473201d9658899c12ac58ef8c5",
+  "source_size": [
+    1280,
+    720
+  ],
+  "boxes": {
+    "art": [
+      0.0859375,
+      0.275,
+      0.28125,
+      0.6222222222222222
+    ],
+    "ring": [
+      0.075,
+      0.25416666666666665,
+      0.2921875,
+      0.6402777777777777
+    ],
+    "label": [
+      0.028125,
+      0.19166666666666668,
+      0.375,
+      0.25555555555555554
+    ]
+  },
+  "sizes": {
+    "art": [
+      64,
+      64
+    ],
+    "ring": [
+      70,
+      70
+    ],
+    "label": [
+      222,
+      23
+    ]
+  },
+  "reviewed_by": "switch-remote worker (Opus 5.5): visual check of the source still and the three enlarged crops, 2026-11-16",
+  "reviewed_at": "2026-11-16T03:23:18Z",
+  "notes": "Source: SSBU is the first tile and selected (cyan ring); label reads \"Super Smash Bros. Ultimate\". art = RGB tile artwork; ring = cyan mask of the selection ring band (interior blanked; a few cyan art-edge pixels inside the band); label = cyan mask of the selected-title text. Thresholds and calibration in homegate.py. Primary countersignature: pending (add primary_review here).",
+  "primary_review": null
+}

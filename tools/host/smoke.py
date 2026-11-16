@@ -10,10 +10,11 @@
   smoke.py --host IP --out DIR online-check       status + one refused tap (expects inject_refused online_*; NSO only)
   smoke.py --host IP --out DIR terminate          TERMINATE, then the new crash reports and our logs fetched
   smoke.py --host IP --out DIR bye                RESET, DETACH, BYE (clean disconnect)
-  smoke.py --backend autopilot --host IP --out DIR fallback-check
-                                                  the sys-autopilot fallback (DESIGN.md 11): status, then on the HOME
-                                                  menu RIGHT and LEFT taps (cursor moves to tile 2 and back), a held
-                                                  ZL released by its lease, RESET; a shot after each. step/stick/bye too.
+
+--backend autopilot (option d, the default driver since 2026-11-16; DESIGN.md 12) takes the same steps:
+  preflight (no RECORDS), launch (HOME -> image-gated still -> A, then the scene reports must start), play/step/stick
+  (gated by scened.py), lan-check/online-check, terminate (HOME -> still -> X -> still -> A), bye, plus
+  driver-check   status, a still, and one tap that must be REFUSED (no game reporting: no_scene_report)
 
 Receipts: DIR/receipts.jsonl (one line per action: wall time, action, reply, screenshot). Screenshots: DIR/shots/.
 The token is read from SWITCH_REMOTE_TOKEN_FILE / ~/.config/switch-remote/token and never written anywhere.
@@ -71,9 +72,17 @@ class Smoke:
             time.sleep(1)
         return self.receipt(f'wait {label} TIMEOUT', {'ok': False, 'status': last})
 
+    def scene(self, st):
+        """(mode, gate, deluxe, age) from either backend's status."""
+        if self.backend == 'autopilot':
+            sc = st.get('scene') or {}
+            return sc.get('mode', '0x0'), st.get('gate'), sc.get('deluxe'), sc.get('age_ms')
+        return st.get('scene_mode', '0x0'), st.get('gate'), st.get('scene_deluxe'), st.get('scene_age_ms')
+
     def preflight(self):
         self.call('status')
-        self.call('switch.records', shot=False)
+        if self.backend != 'autopilot':
+            self.call('switch.records', shot=False)
         r = self.c.request('switch.list', {'root': 'crash_reports'})
         n = len(r.get('result') or [])
         newest = sorted((e for e in (r.get('result') or [])), key=lambda e: e['mtime'])[-3:]
@@ -81,6 +90,13 @@ class Smoke:
         self.call('switch.list', {'root': 'ultimate', 'dir': 'switch-remote'}, shot=False)
 
     def launch(self):
+        if self.backend == 'autopilot':
+            r = self.call('switch.launch')
+            if not r.get('ok'):
+                return r
+            # The NRO's reports are the proof that SSBU (with the plugin) is running.
+            self.wait_status('scene reports started', lambda s: s.get('running'), 120)
+            return self.wait_status('offline scene report (gate allowed)', lambda s: s.get('gate') == 'allowed', 180)
         self.call('switch.records', shot=False)
         r = self.call('switch.launch')
         if not r.get('ok'):
@@ -111,16 +127,19 @@ class Smoke:
 
     def lan_check(self):
         st = self.c.request('status').get('result', {})
-        mode = int(st.get('scene_mode', '0x0'), 16)
-        ok = (mode & 0x7fff0000) == 0x02010000 and st.get('gate') == 'allowed'
-        return self.receipt('local-wireless check', {'ok': ok, 'scene_mode': hex(mode), 'gate': st.get('gate'),
-                                                      'scene_deluxe': st.get('scene_deluxe'),
-                                                      'scene_age_ms': st.get('scene_age_ms')})
+        mode, gate, deluxe, age = self.scene(st)
+        mode = int(mode or '0x0', 16)
+        ok = (mode & 0x7fff0000) == 0x02010000 and gate == 'allowed'
+        return self.receipt('local-wireless check', {'ok': ok, 'scene_mode': hex(mode), 'gate': gate,
+                                                      'scene_deluxe': deluxe, 'scene_age_ms': age})
 
     def terminate(self):
         before = {e['name'] for e in (self.c.request('switch.list', {'root': 'crash_reports'}).get('result') or [])}
         self.call('switch.terminate')
-        self.wait_status('application gone', lambda s: s.get('app') == 'none', 30)
+        if self.backend == 'autopilot':
+            self.wait_status('scene reports stopped', lambda s: not s.get('running'), 30)
+        else:
+            self.wait_status('application gone', lambda s: s.get('app') == 'none', 30)
         after = self.c.request('switch.list', {'root': 'crash_reports'}).get('result') or []
         new = [e['name'] for e in after if e['name'] not in before]
         logs = self.out / 'logs'
@@ -130,18 +149,21 @@ class Smoke:
             self.c.request('switch.fetch', {'root': 'ultimate', 'path': rel, 'out': str(logs / rel)})
         return self.receipt('logs fetched', {'ok': True, 'new_crash_reports': new, 'dir': str(logs)}, shot=False)
 
-    def fallback_check(self):
+    def driver_check(self):
+        """sys-autopilot answers; with no game reporting, a tap must be refused by the host gate (fail closed)."""
         st = self.call('status')
         if not st.get('ok') or st['result'].get('state') != 'reachable':
             return st
-        for button in ('dright', 'dleft'):
-            self.call('input.button', {'button': button, 'state': 'tap', 'duration_ms': 100})
-            time.sleep(0.5)
+        r = self.c.request('input.button', {'button': 'a', 'state': 'tap'})
+        refused = not r.get('ok') and r['error']['code'] == 'inject_refused'
+        return self.receipt('gate refuses without a scene report', {'ok': refused, 'reply': r})
+
+    def lease_check(self):
+        """In game (gate allowed): a held ZL is released by its host lease."""
         self.call('input.button', {'button': 'zl', 'state': 'press', 'lease_ms': 300}, shot=False)
         self.c.wait_leases()
         held = self.c.request('status').get('result', {})
-        self.receipt('lease released', {'ok': not held.get('leases'), 'status': held}, shot=False)
-        return self.call('input.reset')
+        return self.receipt('lease released', {'ok': not held.get('leases'), 'status': held}, shot=False)
 
     def bye(self):
         if self.backend == 'autopilot':
@@ -186,8 +208,10 @@ def main(argv=None):
         s.terminate()
     elif a.cmd == 'bye':
         s.bye()
-    elif a.cmd == 'fallback-check' and a.backend == 'autopilot':
-        s.fallback_check()
+    elif a.cmd in ('driver-check', 'fallback-check') and a.backend == 'autopilot':
+        s.driver_check()
+    elif a.cmd == 'lease-check' and a.backend == 'autopilot':
+        s.lease_check()
     else:
         ap.error(f'unknown command {a.cmd}')
     if a.backend == 'autopilot':

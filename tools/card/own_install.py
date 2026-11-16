@@ -11,11 +11,11 @@ this run follows). Only these destinations are allowed:
   atmosphere/contents/01006A800016E000/romfs/skyline/plugins/libssbu_switch_remote.nro
   atmosphere/contents/4200000000005352/exefs.nsp | toolbox.json | flags/boot2.flag
   ultimate/switch-remote/config.txt
-  atmosphere/contents/4200000000004150/exefs.nsp | toolbox.json      (sys-autopilot fallback; never its boot2.flag)
+  atmosphere/contents/4200000000004150/exefs.nsp | toolbox.json | flags/boot2.flag   (sys-autopilot, option d)
   config/sys-autopilot/config.ini
 
-An optional `remove.txt` (one path per line, # comments) deletes allowed files, plus sys-autopilot's
-flags/boot2.flag (ovlSysmodules creates it when it starts a module). Removed files are kept locally under before/,
+An optional `remove.txt` (one path per line, # comments) deletes allowed files (option d: our sysmodule's
+flags/boot2.flag). Removed files are kept locally under before/,
 and a non-empty one also on the card (ultimate/switch-remote/backups/removed-<sha16>.<name>); the receipt row says
 `removed` (or `already_absent`) and the readback confirms the file is gone.
 
@@ -45,14 +45,16 @@ ALLOWED = (
     'atmosphere/contents/4200000000005352/toolbox.json',
     'atmosphere/contents/4200000000005352/flags/boot2.flag',
     'ultimate/switch-remote/config.txt',
-    # sys-autopilot, the fallback driver (primary ruling 2026-11-16: its folder counts as ours). Deliberately NO
-    # boot2.flag to add: its __appInit diagAborts (a fatal at boot) on any init failure; it is started by hand.
+    # sys-autopilot, the console driver (option d, primary ruling 2026-11-16: its folder counts as ours). Its boot2.flag
+    # is NOT part of the first install (its __appInit diagAborts, a fatal at boot, on any init failure on unverified
+    # firmware): the first start is by hand in ovlSysmodules; a later receipted session adds the flag once it served.
     'atmosphere/contents/4200000000004150/exefs.nsp',
     'atmosphere/contents/4200000000004150/toolbox.json',
+    'atmosphere/contents/4200000000004150/flags/boot2.flag',
     'config/sys-autopilot/config.ini',
 )
-# remove.txt may also delete these (ovlSysmodules CREATES boot2.flag when A starts a module; gui_main.cpp:96-100).
-REMOVABLE = ALLOWED + ('atmosphere/contents/4200000000004150/flags/boot2.flag',)
+# remove.txt may delete the same files (e.g. our sysmodule's boot2.flag when sys-autopilot takes over, option d).
+REMOVABLE = ALLOWED
 WATCH_DIRS = ('atmosphere/contents/01006A800016E000/romfs/skyline/plugins', 'atmosphere/contents/4200000000005352',
               'atmosphere/contents/4200000000004150')
 BACKUP_DIR = 'ultimate/switch-remote/backups'

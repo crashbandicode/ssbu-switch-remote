@@ -93,16 +93,26 @@ class Card(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_tool('install', str(self.job('nopre', {NRO: b'x'})))
 
-    def test_autopilot_fallback_files_allowed_but_not_its_boot2_flag(self):
-        j = self.job('ap', {AP_NSP: b'autopilot', AP_TOOLBOX: b'{}', AP_INI: b'token = secretsecretsecret\n'})
+    def test_option_d_install_then_a_later_boot2_session(self):
+        # One session: add sys-autopilot without its flag, remove our sysmodule's flag, update NRO + config.
+        flag = 'atmosphere/contents/4200000000005352/flags/boot2.flag'
+        (self.card / flag).parent.mkdir(parents=True)
+        (self.card / flag).write_bytes(b'')
+        j = self.job('d1', {AP_NSP: b'autopilot', AP_TOOLBOX: b'{}', AP_INI: b'token = secretsecretsecret\n',
+                            NRO: b'nro 0.2.0', CONFIG: b'token=secretsecretsecret\nscene_host=172.30.254.66\n'})
+        (j / 'remove.txt').write_text(flag + '\n')
         self.run_tool('preflight', str(j))
         self.assertEqual(self.run_tool('install', str(j)), 0)
         r = json.loads((j / 'install-receipt.json').read_text())
         self.assertTrue(r['ok'])
+        self.assertEqual({f['dest']: f['action'] for f in r['files']}[flag], 'removed')
+        self.assertFalse((self.card / AP_FLAG).exists())
         self.assertNotIn('secretsecret', json.dumps(r) + (j / 'INSTALL.md').read_text())
-        with self.assertRaises(SystemExit) as cm:
-            self.run_tool('preflight', str(self.job('apflag', {AP_FLAG: b''})))
-        self.assertIn('not switch-remote files', str(cm.exception))
+        # Later, once sys-autopilot served /status: its boot2.flag in a receipted session of its own.
+        j2 = self.job('d2', {AP_FLAG: b''})
+        self.run_tool('preflight', str(j2))
+        self.assertEqual(self.run_tool('install', str(j2)), 0)
+        self.assertTrue((self.card / AP_FLAG).exists())
 
     def test_remove_list_deletes_only_allowlisted_files_with_receipts(self):
         (self.card / AP_FLAG).parent.mkdir(parents=True)

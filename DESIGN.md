@@ -1,6 +1,6 @@
 # switch-remote: design
 
-2026-11-15, revision 3. Drive the physical Switch running Smash Ultimate 13.0.5 the way agents drive Eden:
+2026-11-16, revision 4. Drive the physical Switch running Smash Ultimate 13.0.5 the way agents drive Eden:
 inject controller input, launch and terminate the game, read crash logs, and see and record the screen.
 Playbook followed: `ssbu-mod-playbook` `3332c0d`. Each fact cites a source. **ASSUMPTION** marks what
 is not verified yet, together with the check that will settle it.
@@ -11,15 +11,20 @@ Revisions:
 - **3** applies ruling A (the conditions for LAUNCH/DISMISS) and ruling B: ns2bench was evaluated, and OBS
   becomes the primary capture backend when it runs.
 
+- **4** adopts option (d) (primary ruling 2026-11-16): sys-autopilot 1.5.0 drives the console, and the online
+  gate, the launch/terminate sequences and the log reads move to the host (§12). Our sysmodule (r5) is parked as
+  the fallback if sys-autopilot fails on fw 23.5.0 (§11). Sections 1, 3 and 3a describe that parked sysmodule.
+
 Revision 1's in-game input path is kept as the documented fallback (§8).
 
 ## The split
 
 | Part | Does | Runs |
 | --- | --- | --- |
-| **sysmodule** (`sysmodule/`, C++17 + libnx) | LAN server; virtual Pro Controller (`hid:dbg` HDLS); macro player; LAUNCH/DISMISS/TERMINATE; crash and plugin logs | Atmosphere boot2 background process, id `4200000000005352`; survives game crashes |
-| **in-game NRO** (`src/`, Rust Skyline plugin) | Reads the game's mode word and Online Deluxe's ONLINE bit; reports the scene to the sysmodule over loopback 10×/s. No hooks. | Inside Smash |
-| **host** (`tools/host/`, Python stdlib + GStreamer/Pillow) | edenctl-compatible client; `switch://` runner backend; capture through OBS (primary) or `capd.py` (V4L2 fallback); GIF cutting | ubuntu-surface (the card is here) |
+| **sys-autopilot 1.5.0** (option d, §12; upstream release, not ours) | LAN REST server; virtual Pro Controller; file access | Atmosphere background process, id `4200000000004150`, started from ovlSysmodules |
+| **sysmodule** (`sysmodule/`, C++17 + libnx; **parked**, §11) | LAN server; virtual Pro Controller (`hid:dbg` HDLS); macro player; LAUNCH/DISMISS/TERMINATE; crash and plugin logs | id `4200000000005352`; files stay on the card, boot2 flag removed |
+| **in-game NRO** (`src/`, Rust Skyline plugin) | Reads the game's mode word and Online Deluxe's ONLINE bit; reports the scene 10×/s to `scene_host` (the host receiver under option d; loopback for the parked sysmodule). No hooks. | Inside Smash |
+| **host** (`tools/host/`, Python stdlib + GStreamer/Pillow) | edenctl-compatible clients (`autopilot://`, `switch://`); scene receiver and gate (`scened.py`); HOME image gate (`homegate.py`); capture through OBS (primary) or `capd.py`; GIF cutting | ubuntu-surface (the card is here), wired 172.30.254.66 |
 
 The request handling is one platform-independent class (`sysmodule/core/service.cpp`). Two platforms implement
 it: libnx on the console (`source/main.cpp`) and a fake one in the host loopback build (`host_loopback/`). The
@@ -284,16 +289,17 @@ stays host-tested.
 
 | Gate | Where | Result |
 | --- | --- | --- |
-| NRO: cargo test / clippy -D warnings / no-default-features / skyline release / diag | Yoga, `remote-gate.ps1`, `e2e802a` (the NRO source is unchanged since) | 21/0, 0, 0, 36,864 B, 36,864 B |
+| NRO 0.2.0 (`scene_host`): cargo test / clippy -D warnings / no-default-features / skyline release / diag | Yoga, `remote-gate.ps1`, `3d6e1bb` | 22/0, 0, 0, 36,864 B (sha256 `d4581396…`), 36,864 B |
 | Sysmodule: devkitA64 r30 + libnx 4.12.0, `-Wall -Wextra -Werror` | Yoga, `tools/build_sysmodule.ps1`, `1cda5f7` (r5) | exefs.nsp 158,967 B (sha256 `b4f634a8…`), 0 warnings, `check_nsp` ok |
-| Sysmodule core | host g++ | 239 checks, 0 failures |
-| Host (client vs loopback Service, sys-autopilot fake, capture, OBS fake, GIF, runner patch) | ubuntu-surface | 61 tests OK |
+| Sysmodule core | host g++ | 240 checks, 0 failures |
+| Host (autopilot driver vs a fake sys-autopilot, scene receiver over TCP, image gate, loopback Service, capture, OBS fake, GIF, runner patch) | ubuntu-surface | 94 tests OK |
 | Card receipt tool (UMS and MTP via gio, incl. allowlisted removals) | ubuntu-surface | 16 tests OK |
-| sys-autopilot fallback build | Yoga, `tools/build_autopilot.ps1`, source `6ca6aac` | sys-autopilot.nsp 238,539 B (sha256 `ea5dfc67…`), `check_nsp` ok |
+| sys-autopilot build from source (reference only; the install uses the 1.5.0 release exefs) | Yoga, `tools/build_autopilot.ps1`, source `6ca6aac` | sys-autopilot.nsp 238,539 B (sha256 `ea5dfc67…`), `check_nsp` ok |
 
-## 11. r5 and the sys-autopilot fallback (primary ruling 2026-11-16)
+## 11. r5: PARKED fallback (built 2026-11-16, superseded by option d the same night)
 
-**r5 (sysmodule 0.3.0, `1cda5f7`, built, not installed).** It is r4 plus three changes. The techniques were
+**r5 (sysmodule 0.3.0, `1cda5f7`, built, never installed).** Kept as the fallback if sys-autopilot fails on
+fw 23.5.0 (it needs a new order; rebuild first, since the core source now also accepts `scene_host`). It is r4 plus three changes. The techniques were
 re-implemented after studying sys-autopilot (TooTallNate) `source/common/server.c`, `power.c` and `main.c`; no
 code was copied (`docs/PROVENANCE.md`).
 - **Network changes.** nifm's IP is read every 2 s. On ANY change, including none→IP, the listeners and
@@ -309,50 +315,57 @@ code was copied (`docs/PROVENANCE.md`).
 - **Socket sizes.** Nintendo's default UDP buffers (0x2400/0xA500) and fixed TCP buffers (0x8000/0x10000), 4
   sessions, the 2 MiB heap.
 
-**Fallback driver.** sys-autopilot 1.5.x, built from pinned source `6ca6aac` for internal use and not
-redistributed. Its license situation: no LICENSE file, `package.json` says MIT, and GitHub reports none.
-- **Install.** Staged at program id `4200000000004150` with our own `toolbox.json` (`requires_reboot: false`),
-  so ovlSysmodules lists it. `config/sys-autopilot/config.ini` carries our token and `log = true`.
-- **No `boot2.flag`.** Its `__appInit` diagAborts on any init failure, which would be a fatal at boot. It is
-  started by hand only.
-- **Host backend: `tools/host/autopilot.py`** (`autopilot://HOST[:4150]`, `--backend autopilot`).
-  - Input, status and capture only. Taps map to `/input/tap`.
-  - press/release map to `/input/hold` and `/input/release` with a HOST-side lease (sys-autopilot has none).
-    Sticks are re-centred by a lease.
-  - reset maps to `/input/clear`. HOME/CAPTURE are refused.
-  - `macro.*` and `switch.*` are refused `unsupported`: no frame-timed macros, no launch, terminate or files
-    through this path.
-  - **No online gate.** The console is LAN-only (§6a). The fallback serves the hardware smoke, and launching the
-    game stays with the operator in this mode.
+**Re-activation, if ever ordered.** Stop sys-autopilot (A in ovlSysmodules: it also deletes its flag), add back our
+`flags/boot2.flag` and set `scene_host=127.0.0.1` (or remove the key) in `config.txt` through a receipted session,
+then reboot. One virtual controller at a time: `autopilot.py` refuses input (`two_drivers`) while port 47130 answers.
 
-**One virtual controller at a time: the switch-over.**
-How ovlSysmodules (`gui_main.cpp:75-114`) handles the flag:
-- A on a running module kills it AND deletes its `flags/boot2.flag` (`:84-88`).
-- A on a stopped module launches it AND creates the flag (`:96-100`).
-- Y only toggles the flag (`:105-112`).
+## 12. Option (d): sys-autopilot drives the console (primary ruling 2026-11-16, ADOPTED)
 
-The switch-over:
-1. Stop ours.
-   - If it listens: `switch_remote.py shutdown`. It releases input, detaches and exits, and keeps its boot2 flag.
-   - Avoid A on "switch-remote": that would also delete our autostart flag. If it was used, press Y once to
-     restore the flag.
-   - If ours never listened, it holds no controller and can stay.
-2. In ovlSysmodules, press A on "sys-autopilot (switch-remote fallback)" to start it, then press **Y once** to
-   delete the boot2 flag that A just created (it must never autostart).
-3. Drive it through `autopilot://`. The client refuses input (`two_drivers`) while our port 47130 answers.
-4. Back: press A on sys-autopilot (it stops and deletes its flag again if present), then start ours with
-   `switch_remote.py restart` if it is still running, or A on "switch-remote" (A creates our flag, which is wanted).
+The operator: "if it works we could just use it". sys-autopilot 1.5.0 (TooTallNate) owns the virtual controller.
+Upstream release exefs `b132156a…` (233,732 B, zip `a409ee7d…`), installed as an internal tool and not
+redistributed. Its license situation is recorded in `docs/PROVENANCE.md`. We add what it lacks, on the host:
 
-Backstop: if sys-autopilot's flag is still there at the next card session (`-Phase card` lists both flags
-folders), the staged cleanup job `card-jobs/cleanup-autopilot-boot2` removes it with receipts (own_install
-`remove.txt`).
+| Need | Where | How |
+| --- | --- | --- |
+| Online gate (fail closed) | `tools/host/scened.py` + `autopilot.py` | The NRO (`scene_host=172.30.254.66`) sends `AUTH` + `SCENE` lines to the host receiver on TCP 47131 (private peers, token, max 4 connections, no replies). `scened.gate` is the core's verdict, ported exactly: no report / stale > 500 ms / guards failed / NSO family / Deluxe-online-not-local-wireless refuse. Every injected input asks the daemon; an unreachable daemon refuses (`no_scene_receiver`). Release and reset are never gated. A watchdog clears all input within ~100 ms when the gate closes while anything is held or a macro plays. |
+| Input | `autopilot.py` | tap → `/input/tap`; press/stick → hold/stick with a HOST-side lease; HOME/CAPTURE refused as plain buttons. |
+| Macros | `autopilot.py` | `.edenmacro.json` played host-side: the state of each sample goes out as hold/release/stick calls at frame/60 s. **HTTP-timed (LAN jitter), NOT frame-exact**: fine for menus; `macro.status` reports `late_ms_max`. Frame-precise hardware rows need a separate plan later. |
+| LAUNCH (re-ruling 2026-11-16) | `autopilot.py` + `homegate.py` | Only when NO fresh scene report exists (none for 5 s, so the game isn't running; an unreachable receiver refuses). Then HOME, a capture still, the **reviewed image gate** (SSBU art in slot 1, the cyan selection ring on slot 1, the selected-title label "Super Smash Bros. Ultimate"), re-check that no report arrived, and A. A failed still stops after HOME (harmless). |
+| TERMINATE | same | HOME, still gate (SSBU suspended at slot 1), X, still (the close dialog must have changed the screen, else stop: A would launch), A, then wait for the reports to stop. |
+| Logs | `autopilot.py` | `switch.list/file/fetch` over `/files`, limited to the sysmodule's six roots; no `..`. |
+| Updates | `tools/card/own_install.py` | Card sessions only (receipts). No over-the-air writes through sys-autopilot in v1. |
 
-**Resume plan** (`tools/host/resume_smoke.ps1`):
-1. `-Phase card`: read r3's logs read-only, then install the r5 job (with boot2) and the fallback job (no boot2).
-2. The operator reboots.
-3. `-Phase smoke`: r5 must listen within 2 min.
-4. If it doesn't, the operator starts sys-autopilot, then `-Phase fallback` (discovery on 4150 and
-   `smoke.py --backend autopilot fallback-check`).
+**Image gate (`homegate.py`).** The references were cut from the Smoke 01 still `000-now.png`: HOME, SSBU first
+and selected. They're stored in `tools/host/refs/home-first-tile-ssbu/` (`review.json`: source sha256, boxes,
+reviewer).
+- The ring and label compare binarized cyan masks, so brightness doesn't move them. The art compares RGB.
+- Calibration (tests): positives (JPEG q60 double pass, 6 % brighter, 1080p) score ≤ 0.6× each threshold.
+  Negatives (cursor on slot 2, another game in slot 1, another title, black/grey/mirrored frames) are refused.
+- The gate refuses if `reviewed_by` is empty.
+
+**Residual risk (ACCEPTED 2026-11-16).** Anyone holding sys-autopilot's token can drive input directly and bypass
+the host gate. Mitigations:
+- The token is host-only: `~/.config/switch-remote/token`, 0600. It is never printed or committed; on the card it
+  sits in `config/sys-autopilot/config.ini`.
+- The console is internet-blocked (§6a).
+- The gate protects every input the agents send.
+
+**Boot safety.** The FIRST install adds no `boot2.flag` for sys-autopilot: its `__appInit` diagAborts (a fatal at
+boot) if any service init fails on fw 23.5.0 / AMS 1.12.2p1, which is unverified.
+- The first start is by hand in ovlSysmodules (our `toolbox.json`, `requires_reboot: false`): **A, then Y once**.
+  ovlSysmodules' A also CREATES the flag (`gui_main.cpp:96-100`); Y deletes it (`:105-112`).
+- Once it has served `/status` on this console, a later receipted session adds the flag (job
+  `card-jobs/d2-autopilot-boot2`).
+- Our sysmodule's flag is removed in the same first session, so it no longer autostarts: one virtual controller.
+
+**The card session** (one, through `own_install.py`, job `card-jobs/d1-autopilot-1.5.0-nro-3d6e1bb`):
+1. Read r3's logs, read-only.
+2. ADD the sys-autopilot exefs, our toolbox.json and config.ini (token, `log = true`). No boot2.flag.
+3. REMOVE `4200000000005352/flags/boot2.flag`.
+4. UPDATE the NRO (0.2.0) and `config.txt` (`scene_host`).
+5. The operator reboots, does A then Y in ovlSysmodules, and leaves the HOME menu with SSBU first.
+6. `resume_smoke.ps1 -Phase smoke` starts `scened.py` (user unit `sr-scened`), finds sys-autopilot on 4150, and
+   runs preflight, `driver-check` (a tap on HOME must be REFUSED), launch, and `lease-check`.
 
 ## Requirement trace
 
@@ -370,7 +383,7 @@ folders), the staged cleanup job `card-jobs/cleanup-autopilot-boot2` removes it 
 | "OBS may still be better for the photo/gif part" | OBS primary when it runs (stills, record, replay buffer); capd fallback | `test_finds_the_card_source_and_screenshots`, `test_record_and_replay`, `test_pick_backend_prefers_obs_then_falls_back` |
 | "we want it to be compatible with the sysmmodule plugin so we don't have to reboot forchanges" | requires_reboot false; hard-kill-safe lifecycle; PUT with receipts for own files; RESTART self-relaunch | `test_restart_reconnects_to_a_fresh_instance`, `test_put_updates_own_file_with_backup_and_receipt`, `test_shutdown_detaches_and_exits`, `test_start_sweeps_interrupted_put_stage` |
 | "online testing should still be possible over local wireless lobby. Those paths should be shared with nso path" | gate allows the local-wireless family, refuses NSO, fails closed when ambiguous; one report path for both; smoke over a local-wireless lobby | `test_local_wireless_lobby_allows_input_nso_refuses`, `test_online_scene_refuses` |
-| "if it works we could just use it instead to drive the hardware tests" (sys-autopilot; ruled: r5 + fallback) | r5 adopts its IP-change rebuild and PSC handling (re-implemented); sys-autopilot staged as a hand-started fallback with an `autopilot://` backend; one controller at a time | `ip_watch_rebuilds_on_any_change`, `test_press_is_released_by_the_host_lease`, `test_refuses_input_while_our_sysmodule_listens`, `test_smoke_fallback_check`, `test_remove_list_deletes_only_allowlisted_files_with_receipts` |
+| "if it works we could just use it instead to drive the hardware tests" (sys-autopilot; ADOPTED as option d) | sys-autopilot drives; host gate from the NRO's reports (`scened.py`); image-gated LAUNCH/TERMINATE; host-timed macros; logs over `/files`; r5 parked | `test_every_closed_verdict_refuses_input_without_a_request`, `test_watchdog_clears_held_input_when_the_gate_closes`, `test_verdicts_match_the_sysmodule_core`, `test_launch_when_no_report_and_home_first_tile`, `test_terminate_without_a_dialog_never_presses_a`, `test_cursor_on_slot_two_is_refused`, `test_option_d_install_then_a_later_boot2_session`, `scene_host_is_private_only` |
 
 ## Open points
 
@@ -381,3 +394,9 @@ Each is settled at the first hardware smoke:
 - The card's latency.
 - `ns:dev` TerminateApplication on fw 23.5.0.
 - A live OBS comparison of CPU cost and drops.
+- Option (d):
+  - Does sys-autopilot 1.5.0 start and serve `/status` on fw 23.5.0 / AMS 1.12.2p1? Its newest evidence is fw 19.0.1.
+  - Do the NRO's scene reports reach 172.30.254.66:47131 over the LAN within the 500 ms freshness window?
+  - Does the image gate pass on a fresh HOME capture after the reboot? A suspended-game tile may differ.
+  - What do the X dialog stills look like (keep them as references)?
+  - The HTTP input jitter (`late_ms_max`) on menus.
