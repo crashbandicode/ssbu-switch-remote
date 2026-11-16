@@ -1,6 +1,6 @@
 # switch-remote: design
 
-2026-11-16, revision 4. Drive the physical Switch running Smash Ultimate 13.0.5 the way agents drive Eden:
+2026-11-16, revision 5. Drive the physical Switch running Smash Ultimate 13.0.5 the way agents drive Eden:
 inject controller input, launch and terminate the game, read crash logs, and see and record the screen.
 Playbook followed: `ssbu-mod-playbook` `3332c0d`. Each fact cites a source. **ASSUMPTION** marks what
 is not verified yet, together with the check that will settle it.
@@ -14,6 +14,9 @@ Revisions:
 - **4** adopts option (d) (primary ruling 2026-11-16): sys-autopilot 1.5.0 drives the console, and the online
   gate, the launch/terminate sequences and the log reads move to the host (§12). Our sysmodule (r5) is parked as
   the fallback if sys-autopilot fails on fw 23.5.0 (§11). Sections 1, 3 and 3a describe that parked sysmodule.
+
+- **5** (primary direction ~03:50Z): INPUT moves to a USB wired controller on the operator's ESP32-S3 board (§13).
+  sys-autopilot becomes optional (logs/files).
 
 Revision 1's in-game input path is kept as the documented fallback (§8).
 
@@ -367,6 +370,98 @@ boot) if any service init fails on fw 23.5.0 / AMS 1.12.2p1, which is unverified
 6. `resume_smoke.ps1 -Phase smoke` starts `scened.py` (user unit `sr-scened`), finds sys-autopilot on 4150, and
    runs preflight, `driver-check` (a tap on HOME must be REFUSED), launch, and `lease-check`.
 
+## 13. USB wired controller on an ESP32-S3 (primary direction 2026-11-16 ~03:50Z; the PRIMARY input route)
+
+The operator: "use [the Freenove ESP32-S3 board] to control the switch via USB so you don't send over network …
+then you wouldn't need the sysmodule". The board is plugged into the Switch DOCK as a wired controller. The host PC
+commands it over the board's second USB port (a UART bridge). There is no network and no sysmodule for input.
+
+**Hardware facts (verified).** Source: the Freenove repo `Freenove/Freenove_ESP32_S3_WROOM_Board` (FNK0085,
+the kit with camera and SD card): `C/C_Tutorial.pdf` p.145 "Difference between USB-OTG and USB-UART Interfaces",
+`ESP32S3_Pinout.png`, `Board.jpg`.
+- **Two USB-C connectors.**
+  - **OTG** is the one beside the EN/RST button. It is wired straight to the ESP32-S3's native USB (D− GPIO19,
+    D+ GPIO20); the tutorial says it can "simulate … gamepad".
+  - **UART** is the one beside the BOOT/IO0 button. It goes through the on-board CH343 USB-serial bridge to UART0
+    (TX GPIO43, RX GPIO44) and is "primarily used for code upload and serial communication".
+  - With the antenna up, OTG is left and UART is right. (The pinout PNG swaps the D+/D− labels; the tutorial matches
+    Espressif's GPIO19 = D−.)
+- **Native USB.** Full-speed device (ESP32-S3 USB-OTG, TinyUSB in ESP-IDF).
+- **Wiring:**
+  - the OTG port → a USB-A port on the Switch dock (a USB-A to USB-C data cable);
+  - the UART port → the host PC (ubuntu-surface, where the capture card and OBS are). It appears as a CH343
+    `ttyACM` device (VID 1a86).
+- **UNVERIFIED: power with both ports connected.** The repo publishes no board schematic, so whether VBUS from the
+  dock and the PC are isolated (diodes) is unknown. Both ports powered at once is the board's documented
+  "USB-OTG ↔ USB-UART" tutorial setup (p.146: "Select the COM port numbers corresponding to USB-UART and USB-OTG
+  respectively"), so it is a normal use. No change is planned.
+
+**The controller descriptor (evidence).**
+- **Device.** A HORI POKKEN CONTROLLER: VID 0x0F0D, PID 0x0092, HID, one interface with an interrupt IN (0x81) and
+  OUT (0x02) endpoint of 64 bytes, `bInterval 1`, an 86-byte report descriptor.
+- **Report.** 8 bytes: 16 buttons (Y B A X L R ZL ZR − + L3 R3 HOME CAPTURE), a 4-bit hat (8 = neutral), LX LY RX
+  RY as 0-255 (0x80 centre; 0 = up/left), and a vendor byte.
+- **Sources:**
+  - GP2040-CE `headers/drivers/switch/SwitchDescriptors.h` at `0195793` (MIT, © 2021 Jason Skuby). The descriptor
+    bytes are reused with that notice (`firmware/THIRD_PARTY.md`).
+  - progmem/Switch-Fightstick README at `af49d546` (MIT): since system update 3.0.0 the Switch treats the Pokken pad
+    as a Pro Controller, and the 16-button variant exposes HOME and Capture.
+  - ns2bench's Pico firmware (`a105ca7`, GPL-3.0, studied only) uses the same 0f0d:0092 identity, a UART host link
+    at 921,600 baud, and a 1 s neutral watchdog.
+- **Other firmware, licences checked.** sorasen2020/SwitchControllerESP32 (MIT, an Arduino ESP32-S3 library) and
+  celclow/SwitchControlLibrary (MIT). Nothing from them is copied.
+- **ASSUMPTION: the poll rate.** The console polls USB pads at about 8 ms (125 Hz), according to third-party pages
+  (ProGCC latency notes; a TDC Mate note), not Nintendo. Settled at the smoke by counting capture frames.
+- **ASSUMPTION: no setting needed.** The pad needs no "Pro Controller Wired Communication" setting. If the Switch
+  ignores it, the operator turns that setting on (System Settings → Controllers and Sensors).
+- **Identity.** We present HORI's IDs because the console accepts only known controllers. Internal use on the
+  operator's own console.
+
+**Firmware (`firmware/`, ESP-IDF v5.5.6 + `espressif/esp_tinyusb`, built on the Yoga).**
+- **Protocol.** The same line protocol as our sysmodule's host channel (docs/PROTOCOL.md), over UART0 at 921,600
+  baud: `AUTH` (accepted: the link is physical), `PING`, `STATUS`, `VERSION`, `BTN <bit> press|release|tap <ms>`,
+  `STICK l|r <x> <y> <ms>`, `RESET`, `MBEGIN`/`MEV`/`MPLAY`/`MSTATUS`/`MSTOP`, `BYE`. `BTN` also takes HOME (18)
+  and CAPTURE (19), for the host's fixed sequences.
+- **Frame-exact sequences.** Macro samples (the sysmodule core's `sr::Macro`, reused) play on the ESP32's own clock
+  at exactly 60 Hz: frame n starts at n × 1/60 s, in esp_timer µs. The report task refreshes the HID report every
+  1 ms. A change scheduled for frame n is therefore visible to the console at its next poll after n/60 s. There is
+  no host jitter; the remaining skew is the console's poll interval (≤ ~8 ms, measured at the smoke). The game's own
+  frames are not synchronized to this clock; nothing on a wired pad can see them.
+- **Watchdog.** If no line arrives for 1 s, everything goes neutral, including a playing macro. The host client
+  sends `PING` every 300 ms while it is connected. A crashed host therefore releases the pad within 1 s.
+- **Status.** `VERSION` gives the firmware name and version and the USB identity. `STATUS` gives `usb_mounted`,
+  `reports` sent, `watchdog_trips`, the macro state, `last_rx_ms` and uptime.
+- **Portable core.** `firmware/core/` is host-tested with g++: report bytes, hat, sticks, leases, watchdog, macro
+  timing and the protocol. A host simulator (`firmware/host_sim/`) serves the same core on a pseudo-terminal for the
+  Python client tests.
+
+**Host backend `usb://<serial device>`** (`tools/host/usbpad.py`, `make_client`, runner patch, `switch_test.py`,
+`smoke.py --backend usb`).
+- **Interface.** The same edenctl surface as the other backends: `input.*` maps to BTN/STICK/RESET, and
+  `macro.play` uploads the samples and plays them on the device timer (unchanged runner macros).
+  Screenshots and GIFs stay on the capture card / OBS.
+- **LAUNCH / TERMINATE / DISMISS.** Controller button sequences with capture-card still checks (`homegate.py`;
+  §12's sequences, shared code):
+  - LAUNCH: HOME → the HOME first-tile gate → A.
+  - TERMINATE: HOME → gate → X → a still that shows the dialog → A.
+  - DISMISS: A only when the still is NOT the HOME first tile, because on HOME, A would launch.
+- **No online gate (primary direction).** A plain wired controller needs none. The NRO's scene report is kept as
+  INFORMATION (status shows `scene` when `scened.py` runs).
+- **Logs and file updates.** Through the OPTIONAL sys-autopilot (`files=autopilot://IP`), else card sessions.
+- **Serial access.** The host user is not in `dialout`. The operator authorizes one of two fixes:
+  - a udev rule giving the CH343 (1a86) `plugdev`, which the user is in;
+  - or `usermod -aG dialout`.
+
+**Flashing.** `tools/flash_pad.ps1` runs esptool (a pinned venv on the host the board is plugged into) over the
+UART port: `write_flash` of bootloader, partition table and app, with esptool's own hash verification. The receipt
+holds the firmware sha256s, the esptool output and the chip MAC.
+
+**Consequences for options (d)/(c).**
+- sys-autopilot and our sysmodule are no longer needed for INPUT.
+- The card session: REMOVE our sysmodule's `boot2.flag` and UPDATE the NRO and config. sys-autopilot becomes an
+  OPTIONAL extra job, for remote log reads and file updates without UMS/DBI.
+- The host gate (`scened.py`) still guards the `autopilot://` route if that is ever used for input.
+
 ## Requirement trace
 
 | Operator clause | Design | Test |
@@ -383,6 +478,7 @@ boot) if any service init fails on fw 23.5.0 / AMS 1.12.2p1, which is unverified
 | "OBS may still be better for the photo/gif part" | OBS primary when it runs (stills, record, replay buffer); capd fallback | `test_finds_the_card_source_and_screenshots`, `test_record_and_replay`, `test_pick_backend_prefers_obs_then_falls_back` |
 | "we want it to be compatible with the sysmmodule plugin so we don't have to reboot forchanges" | requires_reboot false; hard-kill-safe lifecycle; PUT with receipts for own files; RESTART self-relaunch | `test_restart_reconnects_to_a_fresh_instance`, `test_put_updates_own_file_with_backup_and_receipt`, `test_shutdown_detaches_and_exits`, `test_start_sweeps_interrupted_put_stage` |
 | "online testing should still be possible over local wireless lobby. Those paths should be shared with nso path" | gate allows the local-wireless family, refuses NSO, fails closed when ambiguous; one report path for both; smoke over a local-wireless lobby | `test_local_wireless_lobby_allows_input_nso_refuses`, `test_online_scene_refuses` |
+| "use [the ESP32-S3 board] to control the switch via USB so you don't send over network … then you wouldn't need the sysmmodule" | §13: HORI-identity wired pad on the OTG port, UART line protocol, device-timed macros, 1 s watchdog, `usb://` backend, esptool flashing with receipts | `firmware/core/tests` (report, timing, watchdog), `tools/host/tests/test_usbpad.py` |
 | "if it works we could just use it instead to drive the hardware tests" (sys-autopilot; ADOPTED as option d) | sys-autopilot drives; host gate from the NRO's reports (`scened.py`); image-gated LAUNCH/TERMINATE; host-timed macros; logs over `/files`; r5 parked | `test_every_closed_verdict_refuses_input_without_a_request`, `test_watchdog_clears_held_input_when_the_gate_closes`, `test_verdicts_match_the_sysmodule_core`, `test_launch_when_no_report_and_home_first_tile`, `test_terminate_without_a_dialog_never_presses_a`, `test_cursor_on_slot_two_is_refused`, `test_option_d_install_then_a_later_boot2_session`, `scene_host_is_private_only` |
 
 ## Open points
