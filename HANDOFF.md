@@ -126,6 +126,15 @@ Probable root cause: the listener was bound before DHCP. r4 (`9d8a027`, self-dia
   - OPTIONAL `card-jobs/e2-optional-autopilot-1.5.0` (no order.txt).
   - d1 is superseded.
 
+## First hardware contact (2026-11-16 ~04:35Z)
+
+- switch-pad 0.1.2 (`f9208f2`, Yoga build, `switch_pad.bin` 246,160 B sha256 `4f07e1ca…`) flashed on /dev/ttyACM0. All 3 regions are hash-verified, the chip MAC is <device-mac-2> (16 MB flash, 8 MB PSRAM), and the receipt is `artifacts/switch-remote-card/flash-f9208f2/`.
+- `VERSION` = `OK version switch-pad 0.1.2 usb=hori-0f0d:0092`; `usb_mounted=1` 2 s after boot.
+- **Console poll rate measured: 124.5 reports/s = 8.03 ms.**
+- The console was asleep (black). 10 HOME presses (150 ms, 1 s apart, all `OK`) did not wake it; the stills are in `/home/user/ssbu-switch-remote-work/pad-first-test/shots/`. The console kept polling the pad at 125 Hz throughout.
+- Next: the operator wakes the console (power button, or a Bluetooth controller's HOME), then the B→HOME test with stills (`tools/host/pad_wake.py`, `pad_v0_test.py`).
+- Ledger: the Yoga claim was released and the lane cleaned (04:32Z).
+
 ## Pi Zero 2 W (operator note ~03:53Z): evaluated, DESIGN.md 13a
 
 Recommendation: straight to the ESP32-S3; the Pi is the fallback (only if the ESP32 can't present the pad). `pi://` (`usbpad.PiClient`) and padsim's TCP mode (the Pi daemon's shape) are built and tested; the Pi daemon, gadget script and SD image are NOT built.
