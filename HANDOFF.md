@@ -1,6 +1,6 @@
 # HANDOFF: switch-remote
 
-Updated 2026-11-16 ~04:15Z. Worker: switch-remote (Opus 5.5, high), session `81d86844-b65c-42b8-bf83-c7b6d7ba2c32`,
+Updated 2026-11-16 03:36Z (CARD INSTALL REQUEST posted to the INBOX). Worker: switch-remote (Opus 5.5, high), session `81d86844-b65c-42b8-bf83-c7b6d7ba2c32`,
 spawned by the rc6-integration primary. Playbook followed: `ssbu-mod-playbook` `3332c0d`.
 
 ## Objective and scope
@@ -33,7 +33,7 @@ Our sysmodule (r5) is parked as the fallback. `DESIGN.md` (revision 4, §12) is 
   - Resume plan: r3 logs, then install r5 and the fallback, reboot, smoke r5, and switch to the fallback if r5
     doesn't listen within 2 min.
   - Post the CARD INSTALL REQUEST table first. No card actions now; the console is parked.
-- **ADOPT option (d) (primary ruling 2026-11-16 ~04:0xZ; supersedes the r5 + fallback message, which crossed):**
+- **ADOPT option (d) (primary ruling 2026-11-16 ~03:1xZ; supersedes the r5 + fallback message, which crossed):**
   - sys-autopilot 1.5.0 drives; r5 is PARKED as the fallback.
   - LAUNCH re-ruling APPROVED: host-side HOME→A only with no fresh scene report AND a still with SSBU as the HOME
     first tile (reviewed image gate). TERMINATE is HOME→X→A with a still check.
@@ -59,7 +59,7 @@ Our sysmodule (r5) is parked as the fallback. `DESIGN.md` (revision 4, §12) is 
   `/home/user/ssbu-switch-remote-work/sysmodule/39ebc14/`. A later commit that only moved host files needs no
   rebuild (`sysmodule/` unchanged except the Makefile comment).
 - Host: 95 tests OK (`/usr/bin/python3 -I -m unittest discover -s tools/host/tests`, after
-  `make -C sysmodule out/loopback`); card tool 16 OK (`-s tools/card/tests`). Core: 240 checks (2026-11-16 ~04:10Z).
+  `make -C sysmodule out/loopback`); card tool 16 OK (`-s tools/card/tests`). Core: 240 checks (2026-11-16 ~03:30Z).
 - Capture card: `/dev/video4` works, but there is no signal yet: the console is in hekate UMS, mounted
   read-only for us at `/run/media/intpa/SWITCH SD`. OBS 32.2.0 (snap) is installed but not running.
 - Ledger: no open claims of ours. The first sysmodule build left `bid=cb1efd13` open; it was released by hand.
