@@ -15,7 +15,8 @@ param(
     [string]$BuildHost = 'device-2',
     [string]$Idf = '/home/user/build-hosts/toolchains/esp-idf-v5.5.6',
     [string]$IdfTools = '/home/user/build-hosts/toolchains/espressif',
-    [string]$Lane = 'switch-remote-pad'
+    [string]$Lane = 'switch-remote-pad',
+    [int]$WaitMinutes = 120
 )
 $ErrorActionPreference = 'Stop'
 $ssh = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15')
@@ -23,8 +24,14 @@ $full = git -C $Repo rev-parse $Rev
 New-Item -ItemType Directory -Force $Out | Out-Null
 $tar = Join-Path ([IO.Path]::GetTempPath()) "sr-pad-$($full.Substring(0, 8)).tar"
 git -C $Repo archive --format=tar -o $tar $full firmware sysmodule/core
-$claim = & ssh @ssh $BuildHost "/usr/bin/python3 -I ~/build-hosts/bin/ledger.py claim --host yoga --owner switch-remote --note 'switch-pad firmware $($full.Substring(0, 8))'" 2>&1
-if ($LASTEXITCODE -ne 0) { throw "ledger claim refused: $claim" }
+$deadline = (Get-Date).AddMinutes($WaitMinutes)
+while ($true) {
+    $claim = & ssh @ssh $BuildHost "/usr/bin/python3 -I ~/build-hosts/bin/ledger.py claim --host yoga --owner switch-remote --note 'switch-pad firmware $($full.Substring(0, 8))'" 2>&1
+    if ($LASTEXITCODE -eq 0) { break }
+    if ((Get-Date) -gt $deadline) { throw "ledger claim refused for $WaitMinutes min: $claim" }
+    "$(Get-Date -AsUTC -Format 'HH:mm:ssZ') yoga busy ($((@($claim) -join ' ').Trim().Substring(0, [Math]::Min(120, (@($claim) -join ' ').Trim().Length)))); waiting 60 s"
+    Start-Sleep -Seconds 60
+}
 $bid = (@($claim) | Where-Object { $_ -and $_.Trim() } | Select-Object -Last 1).Trim()
 try {
     $remote = "build-hosts/lanes/$Lane"
