@@ -10,6 +10,17 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **12:3x-12:45Z operator corrections:** ONE session (not 45-60 min splits); NO redundant tests: every catalog row has
+  `- **Covered by:** self | <ID> | pilot F0x`, and only `self` HW rows execute; the rows must run in the playbook
+  RUNNER format (`ssbu-mod-playbook/tools/eden-runner/runner.py` rows.json) as one unattended invocation.
+  harness-lib-opus builds the hardware backend. Coordination post: INBOX line 38806, plus a message to session
+  ssbu-mod-playbook-6e. The firmware macro contract already exists (MBEGIN/MEV/MPLAY; PING ≤0.5 s during play; HOME via
+  BTN 18). switch-remote-2 owns the firmware: flash only between pilot rows (coordinate with switch-hw-ledger-sonnet).
+  - `tools/runbook_rows_json.py` generates `$RUNBOOK/rows.json` from executed rows (+ pilot F0x from the ledger PLAN),
+    in SESSION.md order. Tested on pilot F01/F06.
+  - Still to do: the lanes' rows → cross-page dedupe → `SESSION.md` → `rows.json` → historical selector tests →
+    `RUNBOOK.md` → post `HW RUNBOOK READY` with the counts catalog / executed / covered-by-rep / pilot-covered / PERF /
+    ONLINE / 2P + the session length.
 - **~12:25Z NEW JOB: FULL HW RUNBOOK** (operator: every TR feature, incl. clean-room ports; then only re-test changed
   code paths). Dir `/home/user/smash-training-lobby/artifacts/switch-hw-runbook/`: `BRIEF-extract.md` (row format),
   `rows/{cpu,display-and-controls,fighters-and-stages,recording,saves-and-speed,cross-cutting}.md` + `coverage-eden-rows.md`
