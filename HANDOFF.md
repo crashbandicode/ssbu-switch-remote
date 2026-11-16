@@ -10,6 +10,17 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **~17:30Z STRICT-CHECKS RELAUNCH PREP (SWITCH RELEASED by the primary; the console is on the Training CSS).**
+  - **Why:** the BTT leak (FS-65/68 left it ON) contaminated PF-05..REC-21; only 12/212 rows had checked effect gates.
+  - **New rules:** the clean-state gate + recovery, mode-off endings, the async gateway **Grok 4.6 high judge**
+    (`$RB/judge/judge.py --model grok-gw`; calibrated 18/19; GLM dropped), final = gates + judge (UNSURE →
+    RAN-UNVERIFIED), stop only after **3 consecutive failures**, **KNOWN-PRODUCT-ISSUE** rows (P1 swap; BTT zoom/banner;
+    projectiles vs targets) don't count, the P1-swap rows run EARLY (evidence for the fix lane).
+  - **Section rows done:** `$RB/rows-v2/` (Expected lines + labelled stills; 5 log gates).
+  - **The Opus core is finishing:** `$RB/relaunch/rows.json`, run dir **artifacts/switch-hw-session-2/**, a fresh Skyline
+    capture (it stopped at 15:25:58Z in session-1). When it reports CORE READY: launch via the /tmp/pb-clip runner, then post
+    the start + first 15 + the P1-swap clip paths.
+  - The 3 section authors and the judge worker are done.
 - **~16:10Z SESSION PAUSED for the NVENC encoder change (INBOX 40490).** OBS stopped (finalized), the claim released, SSBU still in
   Training. Last completed row **SC-02**; next **PF-09** (interrupted mid-row, reruns). **RESUME on the primary's "encoder
   changed":**
