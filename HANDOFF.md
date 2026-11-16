@@ -10,6 +10,10 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **21:21Z RESHIP ON CARD + VERIFIED:** TR `80bb1203` → **`85e8adef…5553e5`** (rc15/hw-reship 9f683363 release); footer
+  `0.2.0-rc.15 · rc15 9f683363` in Training. Receipts `artifacts/switch-remote-card/install-r1-tr-hwreship/`; rollback on
+  card `ultimate/switch-remote/backups/pre-85e8adefd2e32ada.libtraining_rooms.nro` + locally. **Card = TR 9f683363 +
+  Deluxe 0.10.8 + tile cursor + 17 others (20 NROs).** Console free in Training (the primary hands it to switch-hw-opus).
 - **~20:20Z HARDWARE TESTING STOPPED (the operator).** Console idle in Training (SSBU running); pad reset + stale claim
   released via `switch_hw.py down artifacts/switch-hw-feature-ledger/run-1`; OBS idle.
   - **~20:55Z the operator: "build it and test it on the switch directly"**: at the GO (the NRO path + sha), run
