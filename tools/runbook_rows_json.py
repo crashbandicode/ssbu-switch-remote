@@ -90,9 +90,23 @@ def build_row(row_id, token_lists, name, covers):
                                   'todo': 'harness-lib: map to the hardware backend system-button call'})
                     checked = False
                 elif parts[0] == 'press' and len(parts) == 3:
-                    recipe.append({'buttons': parts[1], 'hold': int(parts[2]), 'gap': 0})
-                elif parts[0] == 'stick' and len(parts) == 4:
-                    recipe.append({'stick': [float(parts[1]), float(parts[2]), int(parts[3])], 'gap': 0})
+                    item = {'buttons': parts[1], 'hold': int(parts[2]), 'gap': 0}
+                    prev = recipe[-1] if recipe else None
+                    if prev and 'stick' in prev and not prev['gap']:  # stick then press, no sleep: a chord
+                        recipe.pop()
+                        item['with_stick'] = prev['stick'][:2]
+                    recipe.append(item)
+                elif parts[0] in ('stick', 'STICK') and len(parts) in (4, 5):
+                    if parts[0] == 'STICK':  # STICK l|r <x> <y> <ms>, console units
+                        side, x, y, ms = parts[1], float(parts[2]) / 32767, float(parts[3]) / 32767, int(parts[4])
+                    else:
+                        side, x, y, ms = 'l', float(parts[1]), float(parts[2]), int(parts[3])
+                    key = 'stick' if side == 'l' else 'rstick'
+                    prev = recipe[-1] if recipe else None
+                    if key == 'stick' and prev and 'buttons' in prev and not prev['gap'] and 'with_stick' not in prev:
+                        prev['with_stick'] = [round(x, 4), round(y, 4)]  # press then stick, no sleep: a chord
+                    else:
+                        recipe.append({key: [round(x, 4), round(y, 4), ms], 'gap': 0})
                 elif parts[0] == 'clear':
                     recipe.append({'clear': True, 'gap': 0})
                 else:
