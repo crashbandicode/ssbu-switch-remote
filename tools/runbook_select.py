@@ -29,7 +29,8 @@ RUNBOOK = Path('/home/user/smash-training-lobby/artifacts/switch-hw-runbook')
 TR_REPO = Path('/home/user/tr-fixes-20261113/a-full')
 ID = r'[A-Z]+-\d+[A-Za-z]?|F\d\d'
 HEAD_RE = re.compile(rf'^###\s+({ID})\s+(.*)$')
-FIELD_RE = re.compile(r'^\s*-\s+\*\*(Class|Code paths|Est|Fixture|Pilot|Covered by|Replaces|Page|Start gate|Release):\*\*\s*(.*)$')
+FIELD_RE = re.compile(r'^\s*-\s+\*\*(Class|Code paths|Est|Fixture|Pilot|Covered by|Replaces|Page|Start gate|Release'
+                      r'|Fixture-setup|Fixture-dirty|Needs|Scope|Invalidates|Expected|Verdict|Mode-on):\*\*\s*(.*)$')
 
 
 def load_globs(path):
@@ -49,9 +50,9 @@ def parse_cover(val):
     return 'self'
 
 
-def load_rows(runbook):
+def load_rows(runbook, rows_dir='rows'):
     rows = []
-    for md in sorted((runbook / 'rows').glob('*.md')):
+    for md in sorted((Path(runbook) / rows_dir).glob('*.md')):
         cur = None
         for line in md.read_text().splitlines():
             m = HEAD_RE.match(line)
@@ -96,8 +97,8 @@ def pilot_aliases(rows):
             if r.get('replaces') and kind(r['class']) == 'HW' and r['covered_by'] == 'self'}
 
 
-def session_order(runbook):
-    p = runbook / 'SESSION.md'
+def session_order(runbook, session=None):
+    p = Path(session) if session else runbook / 'SESSION.md'
     if not p.exists():
         return {}
     order = {}

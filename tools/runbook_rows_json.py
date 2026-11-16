@@ -11,7 +11,13 @@ groups (`## G..` headings). Each row's hwstep token lists (the text after ` -- `
                          -> one segment per contiguous input run, as a recipe for recipe_macro.py
   still:LABEL            -> a shot step "<ID>-<LABEL>" (evidence for review after the run); with --acquire an image
                             gate that acquires its reference on the first run (REVIEW stop after each such row)
+  mark:<ROW>-<label>     -> {"mark": name}: a before-still for a change gate (GATES.md)
+  check:<ROW>-<label>    -> {"gate": name, "effect": true}: a checked effect gate from <runbook>/gates/*.json
   page:<TR page>         -> hooks/tr_page.py:goto (the menu open on that page, found from the lit page tab)
+Row fields for the judge: `- **Expected:** <one line>` -> row "expected"; the still: labels -> row "shots"
+[{name, phase before|step|after}]. Clean state (off with --no-clean-state): every row starts with
+hooks/clean_state.py:ensure_clean, and a row that turns a TR mode on (`- **Mode-on:**`, else MODE_ON) ends with
+clean_state.py:mode_off. Plan keys for the runner: require_effect, stop_after_consecutive_failures, judge (--judge).
   route:<hook>           -> routes:<hook> (harness-lib switch_boot / switch_to_training / switch_close)
   press home|capture     -> routes:switch_close (HOME can't be in a pad macro); listed under home_in_row
 Evidence (--evidence session, the default): ONE continuous OBS recording for the whole run (plan "session_recording";
@@ -29,6 +35,18 @@ pages (an L/R press), or when it starts with the menu open. A row whose start ga
 "chain" row: placing view, an editor) runs inside the runner row before it.
 Every runner row starts on a gate ("training": hw ref image; "tr-menu": the lit-tab hook), and the plan's recover
 is hooks/tr_page.py:home, so a failed row is followed by the next one (runner on_failure "continue").
+Fixtures (2026-11-16, after switch-hw-session-1): "option state that carries between rows is a plan bug: every row that
+depends on an option must set it, not rely on order". Setup rows live in rows/fixture-setups.md (`### FX-nn`, fields
+Scope group|row, Invalidates, Est, an hwstep command block). A catalog row names them with
+`- **Fixture-setup:** FX-01, FX-02`; the generator puts a runner row `FX-01-for-<row>` in front of the row when the
+setup is not already in force (Scope group: once for a run of rows that need it, again after a row that declares
+`- **Fixture-dirty:** FX-01` or after a setup that `Invalidates` it; Scope row: before every row that names it). The
+row then starts with hooks/tr_fixture.py:require (the setup row's receipt must be PASS, plus the rows named in
+`- **Needs:** REC-05` for files and selections no setup can recreate), so a lost fixture fails fast and says so.
+Every runner row also starts with hooks/tr_fixture.py:settle (home, then wait for the "Fighters / Loading N/7"
+notice to be gone: a loading fighter swallows menu presses). Fixture gates (fx-*) come from refs/fixture-refs.json.
+  --session FILE      the session order/T rows (default SESSION.md); --segments-dir DIR  compiled macros go to DIR
+  (default segments); --no-fixtures / --no-settle  turn the fixture rows / the settle step off.
 Nothing here talks to hardware; the runner's hardware backend (harness-lib switch_hw.py) plays it.
 """
 import argparse
@@ -68,6 +86,17 @@ MENU_GATE = {'kind': 'hook', 'module': HOOK, 'function': 'menu_open_gate', 'cap'
 SESSION_RECORDING = {'marks': ['row-start', 'row-end', 'shot'], 'chapters': True, 'log': 'recording.jsonl'}
 LIVE_REFS = 'refs/live-refs.json'
 LIVE_CAP = 8
+FIXTURE_HOOK = 'hooks/tr_fixture.py'
+FIXTURE_ROWS = 'fixture-setups.md'
+FIXTURE_REFS = 'refs/fixture-refs.json'
+NOTICE_GATE = {'kind': 'hook', 'module': FIXTURE_HOOK, 'function': 'notice_clear_gate', 'key': 'fx-notice-clear',
+               'need': 3, 'cap': 90, 'interval': 0.25}
+# fixture-refs.json name -> (plan gate name, hook function)
+FIXTURE_GATES = {'fx-cpu-mario': ('fx-cpu-mario', HOOK, 'image_gate'),
+                 'fx-cpu-olimar': ('fx-cpu-olimar', HOOK, 'image_gate'),
+                 'fx-grid-mario': ('fx-grid-mario', HOOK, 'image_gate'),
+                 'fx-p1-richter': ('fx-p1-changed', FIXTURE_HOOK, 'p1_changed_gate')}
+FX_ID = re.compile(r'FX-\d+')
 
 # The measured hardware cost model (hw-run-2 actions.jsonl 2026-11-16 13:08-13:12Z, hw-proof-1, pilot receipts).
 COST = {'play': 0.15,        # macro.play upload + completion poll beyond the macro's own frames (median 0.13 s)
@@ -79,7 +108,12 @@ COST = {'play': 0.15,        # macro.play upload + completion poll beyond the ma
         'goto_r': 0.7,       # each R page turn (tr-r) inside a goto
         'goto_close': 0.9,   # open=False: tr-b + the training gate
         'gif': 7.0,          # gif mode only: recording.start + stop + mp4 finalize + gif publish
-        'run': 0.3}          # another checking hook
+        'run': 0.3,          # another checking hook
+        'settle': 1.3,       # tr_fixture:settle with no fighter loading: home look + gate, two notice looks
+        'require': 0.05,     # tr_fixture:require reads receipts
+        'clean': 1.2,        # clean_state:ensure_clean on a clean screen: home look + one classify still
+        'mode_off': 14.0,    # clean_state:mode_off: classify, F&S Practice games reset (seek + A + confirm), re-check
+        'notice_gate': 10.0}  # the fx-notice-clear gate after a fighter pick: Loading N/7 ... Ready, ~5-15 s measured
 ROUTE_COST = {'routes:switch_boot': 101.0, 'routes:switch_to_training': 39.0, 'routes:switch_close': 4.0}
 MENU_OPEN = 'press b+up 100'
 TRAILING_MAX = 2.0
@@ -170,11 +204,20 @@ def model_seconds(row, segments):
             elif 'shot' in s:
                 total += COST['shot'] + COST['mark']
             elif 'gate' in s:
-                total += COST['menu_gate'] if s['gate'] == 'tr-menu' else COST['gate']
+                total += COST['menu_gate'] if s['gate'] == 'tr-menu' else \
+                    COST['notice_gate'] if s['gate'] == 'fx-notice-clear' else COST['gate']
             elif 'wait_ms' in s:
                 total += s['wait_ms'] / 1000
             elif 'run' in s:
-                if s['run'].endswith(':goto'):
+                if s['run'].endswith(':ensure_clean'):
+                    total += COST['clean']
+                elif s['run'].endswith(':mode_off'):
+                    total += COST['mode_off']
+                elif s['run'].endswith(':settle'):
+                    total += COST['settle']
+                elif s['run'].endswith(':require'):
+                    total += COST['require']
+                elif s['run'].endswith(':goto'):
                     total += COST['goto'] + COST['goto_r'] * s.get('est_r', 1) + \
                         (0 if s['args'].get('open') else COST['goto_close'])
                 else:
@@ -238,7 +281,7 @@ def infer_page(row_id, fields):
 def first_input(tokens):
     for toks in tokens:
         for t in toks:
-            if not t.startswith(('sleep:', 'still:')):
+            if not t.startswith(('sleep:', 'still:', 'mark:', 'check:')):
                 return t
     return ''
 
@@ -390,10 +433,13 @@ def macro_doc(name, intervals, game_id='01006A800016E000'):
 
 
 class Builder:
-    def __init__(self, acquire=False, base=None, gifs=False):
-        self.acquire, self.base, self.gifs = acquire, base, gifs
+    def __init__(self, acquire=False, base=None, gifs=False, segdir='segments'):
+        self.acquire, self.base, self.gifs, self.segdir = acquire, base, gifs, segdir
         self.segments, self.gates = {}, {}
+        self.by_recipe = {}  # identical input runs (a repeated setup) share one compiled segment
+        self.dedupe = True
         self.held_stills = []  # stills taken while a lease is held: the gif shows them (a shot would end the hold)
+        self.checks, self.marks_used = {}, {}  # row id -> check:/mark: names (GATES.md vocabulary)
 
     def command(self, row_id, toks, n):
         """One hwstep command line -> steps (gif-wrapped input runs; run/goto steps between)."""
@@ -412,11 +458,19 @@ class Builder:
                 inner.append({'wait_ms': round(lead * 1000 / FPS)})
             if not recipe:
                 return
+            key = json.dumps([recipe, [[n, sorted(b), list(ls), list(r_)] for n, b, ls, r_ in line.intervals()]
+                              if rstick else None], sort_keys=True)
+            if self.dedupe and key in self.by_recipe:
+                inner.append({'play': self.by_recipe[key]})
+                return
             seg = f'{row_id}-s{1 + len([s for s in self.segments if s.startswith(f"{row_id}-s")]):02d}'
+            self.by_recipe[key] = seg
             total = sum(a['frames'] + a['gap_frames'] for a in recipe)
             entry = {'recipe': recipe, 'cap': int(math.ceil(total / FPS)) + 30}
+            if self.segdir != 'segments':
+                entry['file'] = f'{self.segdir}/{seg}.edenmacro.json'
             if rstick:  # written here; recipe_macro.py skips a segment that has a file and a sha256
-                rel = f'segments/{seg}.edenmacro.json'
+                rel = f'{self.segdir}/{seg}.edenmacro.json'
                 path = self.base / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 body = json.dumps(macro_doc(seg, line.intervals()), sort_keys=True, separators=(',', ':'))
@@ -450,6 +504,19 @@ class Builder:
                     continue
                 flush()
                 inner.append({'gate': name})
+            elif t.startswith(('mark:', 'check:')):  # GATES.md: a before-mark / a checked effect gate (by name)
+                kind, _, name = t.partition(':')
+                if not name or not name.startswith(f'{row_id}-'):
+                    raise SystemExit(f'{row_id}: {t!r}: mark/check names start with the row id ({row_id}-<label>)')
+                if line.busy():
+                    line.t = max(line.t, line.end())  # the input before it completes first (no gate inside a hold)
+                flush()
+                if kind == 'mark':
+                    inner.append({'mark': name})
+                    self.marks_used.setdefault(row_id, []).append(name)
+                else:
+                    inner.append({'gate': name, 'effect': True})
+                    self.checks.setdefault(row_id, []).append(name)
             elif t.startswith('still:'):
                 g = f'{row_id}-{t[6:]}'
                 if line.busy():
@@ -519,9 +586,145 @@ def mark_checks(steps, checked=False):
     return checked
 
 
-def parse_session(rb):
+def load_fixtures(rb, rows_dir='rows'):
+    """rows/fixture-setups.md -> {FX-nn: {'name', 'fields', 'toks', 'scope', 'invalidates'}}; {} when there is none."""
+    p = Path(rb) / rows_dir / FIXTURE_ROWS
+    if not p.is_file() and rows_dir != 'rows':
+        p = Path(rb) / 'rows' / FIXTURE_ROWS
+    if not p.is_file():
+        return {}
+    text = p.read_text()
+    out = {}
+    for line in text.splitlines():
+        m = rs.HEAD_RE.match(line)
+        if m and FX_ID.fullmatch(m.group(1)):
+            fields, toks = section(text, m.group(1))
+            scope = fields.get('Scope', 'group').split()[0].lower()
+            if scope not in ('group', 'row'):
+                raise SystemExit(f'{m.group(1)}: Scope must be group or row, not {scope!r}')
+            if not toks:
+                raise SystemExit(f'{m.group(1)}: a setup row needs an hwstep command block')
+            out[m.group(1)] = {'name': m.group(2).strip(), 'fields': fields, 'toks': toks, 'scope': scope,
+                               'invalidates': set(FX_ID.findall(fields.get('Invalidates', '')))}
+    return out
+
+
+def load_fixture_gates(rb):
+    """Plan gates of the fixture rows: the notice gate and the references of refs/fixture-refs.json."""
+    gates = {'fx-notice-clear': dict(NOTICE_GATE)}
+    path = Path(rb) / FIXTURE_REFS
+    if path.is_file():
+        for name, ref in json.loads(path.read_text()).items():
+            if name not in FIXTURE_GATES:
+                continue
+            gate, module, function = FIXTURE_GATES[name]
+            gates[gate] = {'kind': 'hook', 'module': module, 'function': function, 'reference': ref['reference'],
+                           'sha256': ref['sha256'], 'roi': ref['roi'], 'frame': [1280, 720],
+                           'tolerance': ref['tolerance'], 'cap': LIVE_CAP * 2, 'interval': 0.25,
+                           'live_verdict': ref['proves']}
+    return gates
+
+
+CLEAN_HOOK = 'hooks/clean_state.py'
+# tr_seek.py's section jumps (the clean-state reset seeks F&S > Practice games > "Reset page to defaults")
+CLEAN_SEGMENTS = {'tr-zl-up': [{'buttons': 'zl+up', 'hold': 100, 'gap': 0.35}],
+                  'tr-zl-down': [{'buttons': 'zl+down', 'hold': 100, 'gap': 0.35}]}
+# Rows that turn a TR mode on (session-1 review): they end with clean_state.py:mode_off. A row file can name its own
+# with `- **Mode-on:** btt, eggs` (`none` = no mode).
+MODE_ON = {**{f'FS-{n}': ['btt'] for n in range(65, 71)}, **{f'FS-{n}': ['eggs'] for n in range(54, 64)},
+           **{r: ['drill'] for r in ('PF-07', 'PF-08', 'SC-02', 'PF-09', 'REC-26', 'REC-38')},
+           'FS-27': ['stage-builder'], 'SB-01': ['stage-builder'], 'CPU-94': ['hide-cpu']}
+MODES = ('btt', 'eggs', 'drill', 'stage-builder', 'hide-cpu')
+
+
+def modes_of(rid, fields):
+    """The TR modes a row turns on: its `Mode-on:` field, else MODE_ON."""
+    if fields.get('Mode-on'):
+        named = [x.strip().lower() for x in re.split(r'[,\s]+', fields['Mode-on']) if x.strip()]
+        if named[:1] == ['none']:
+            return []
+        bad = [x for x in named if x not in MODES]
+        if bad:
+            raise SystemExit(f'{rid}: Mode-on {bad} is not one of {MODES}')
+        return named
+    return list(MODE_ON.get(rid, []))
+
+
+def walk_steps(steps):
+    for s in steps:
+        if 'gif' in s:
+            yield from walk_steps(s['gif'].get('steps', []))
+        else:
+            yield s
+
+
+def labelled_shots(steps, own_from=0):
+    """The row's named stills for the judge: [{'name', 'phase'}], phase before (ahead of the row's first own input),
+    after (behind its last input) or step."""
+    flat = list(walk_steps(steps))
+    plays = [i for i, s in enumerate(flat) if 'play' in s and i >= own_from]
+    first, last = (plays[0], plays[-1]) if plays else (len(flat), -1)
+    return [{'name': s['shot'], 'phase': 'before' if i < first else 'after' if i > last else 'step'}
+            for i, s in enumerate(flat) if 'shot' in s]
+
+
+def load_effect_gates(folder):
+    """GATES.md: every <folder>/*.json {"gates": {name: gate}, "marks": [names]} -> (gates, marks). An "image" gate
+    becomes the dim-tolerant hook (tr_page.py:image_gate): the runner's own image compare fails a dimmed screen."""
+    gates, marks = {}, set()
+    folder = Path(folder)
+    if not folder.is_dir():
+        return gates, marks
+    for path in sorted(folder.glob('*.json')):
+        if path.name.endswith('.validation.json'):
+            continue
+        doc = json.loads(path.read_text())
+        for name, gate in (doc.get('gates') or {}).items():
+            if name in gates:
+                raise SystemExit(f'{path.name}: gate {name} is also defined in another gates file')
+            gate = dict(gate)
+            if gate.get('kind') == 'image':
+                gate = {**{k: v for k, v in gate.items() if k not in ('kind', 'scale')},
+                        'kind': 'hook', 'module': HOOK, 'function': 'image_gate'}
+                gate.setdefault('frame', [1280, 720])
+            gate['effect'] = True
+            gate['source_file'] = f'{folder.name}/{path.name}'
+            gates[name] = gate
+        marks.update(doc.get('marks') or [])
+    return gates, marks
+
+
+def check_vocabulary(rows, builder, gates, marks):
+    """Every check: names a gate of the gates files; a change gate's mark is taken earlier in the same row; GATES.md
+    floors (tolerance <= 15, min_diff >= 6)."""
+    errors = []
+    for row in rows:
+        seen_marks = []
+        for s in walk_steps(row['steps']):
+            if 'mark' in s:
+                seen_marks.append(s['mark'])
+            if s.get('effect'):
+                gate = gates.get(s['gate'])
+                if gate is None:
+                    errors.append(f'{row["id"]}: check:{s["gate"]} is not defined in the gates files')
+                    continue
+                if gate.get('kind') == 'change' and gate.get('mark') not in seen_marks:
+                    errors.append(f'{row["id"]}: {s["gate"]} needs mark:{gate.get("mark")} before it')
+                if gate.get('tolerance', 0) > 15:
+                    errors.append(f'{s["gate"]}: tolerance {gate["tolerance"]} > 15 (GATES.md)')
+                if gate.get('kind') == 'change' and gate.get('min_diff', 0) < 6:
+                    errors.append(f'{s["gate"]}: min_diff {gate.get("min_diff")} < 6 (GATES.md)')
+    return errors
+
+
+def ids_of(value):
+    """Row/setup ids in a field value; `none` (or empty) is no id."""
+    return [] if not value or value.strip().lower().startswith('none') else re.findall(rf'\b({rs.ID})\b', value)
+
+
+def parse_session(rb, session=None):
     """SESSION.md -> (T-row texts by id, {group title: [ids]})."""
-    p = rb / 'SESSION.md'
+    p = Path(session) if session else rb / 'SESSION.md'
     if not p.exists():
         return '', {}
     text = p.read_text()
@@ -551,14 +754,31 @@ def main(argv=None):
                          'gif: the old per-command gif wrappers')
     ap.add_argument('--no-poll', action='store_true',
                     help='keep every fixed sleep (no tr-menu / live-reference gates, no trailing-sleep drop)')
+    ap.add_argument('--session', help='session order and T rows (default <runbook>/SESSION.md)')
+    ap.add_argument('--segments-dir', default='segments',
+                    help='folder (beside --out) for the compiled macros; recipe_macro.py writes them there')
+    ap.add_argument('--no-fixtures', action='store_true', help='ignore rows/fixture-setups.md and Fixture-setup/Needs')
+    ap.add_argument('--no-settle', action='store_true', help='no tr_fixture:settle step at the start of a row')
+    ap.add_argument('--rows-dir', default='rows',
+                    help='catalog row files (relative to --runbook, or absolute); the section workers write rows-v2')
+    ap.add_argument('--gates-dir', default='gates',
+                    help='effect gates: every <dir>/*.json {"gates": {...}, "marks": [...]} (GATES.md) is merged')
+    ap.add_argument('--no-clean-state', action='store_true',
+                    help='no hooks/clean_state.py steps (row start: ensure_clean; mode-on rows: mode_off ending)')
+    ap.add_argument('--judge', default=None,
+                    help='plan "judge" command (e.g. judge/judge.py): the runner queues a judge job per row')
+    ap.add_argument('--stop-after', type=int, default=3,
+                    help='plan "stop_after_consecutive_failures" (default 3; 0 = the runner default early stop)')
     a = ap.parse_args(argv)
     rb = Path(a.runbook)
-    rows = rs.load_rows(rb)
+    rows = rs.load_rows(rb, a.rows_dir)
     by_id = {r['id']: r for r in rows}
     alias = rs.pilot_aliases(rows)
-    texts = {md.name: md.read_text() for md in (rb / 'rows').glob('*.md')}
+    texts = {md.name: md.read_text() for md in (rb / a.rows_dir).glob('*.md')}
     pilot_text = Path(a.pilot).read_text() if Path(a.pilot).exists() else ''
-    session_text, groups = parse_session(rb)
+    session_text, groups = parse_session(rb, a.session)
+    fixtures = {} if a.no_fixtures else load_fixtures(rb, a.rows_dir)
+    effect_gates, effect_marks = load_effect_gates(rb / a.gates_dir)
     t_ids = [m.group(1) for m in re.finditer(r'^###\s+((?:T|SC)-\d+[A-Za-z]?)\s', session_text, re.M)]
 
     covers, _ = rs.resolve({r['id']: r for r in rows}, rows)  # Covered-by chains and pilot aliases followed
@@ -566,8 +786,9 @@ def main(argv=None):
                                            if k in by_id else -1)}
     for t in t_ids:
         covers.setdefault(t, [])
-    order = rs.session_order(rb)
+    order = rs.session_order(rb, a.session)
     run_ids = sorted(covers, key=lambda i: (order.get(i, 10 ** 6), list(covers).index(i)))
+    rep_of = {c: rep for rep, cs in covers.items() for c in cs}
 
     def source(rid):
         if rid in by_id:
@@ -592,11 +813,24 @@ def main(argv=None):
         if unknown:
             raise SystemExit(f'--only: not executed rows: {unknown}')
         keep = set(want)
-        for rid in list(want):  # a chain row needs the rows it starts from
+
+        def add_chain(rid):  # a chain row needs the rows it starts from
             i = run_ids.index(rid)
             while i > 0 and meta[run_ids[i]]['start'] == 'chain':
                 i -= 1
                 keep.add(run_ids[i])
+        for rid in list(want):
+            add_chain(rid)
+        grown = bool(fixtures)
+        while grown:  # a row's Needs (files and selections made by other rows) must run too
+            grown = False
+            for rid in sorted(keep):
+                for n in ids_of(meta[rid]['fields'].get('Needs', '')):
+                    rep = rep_of.get(alias.get(n, n), alias.get(n, n))
+                    if rep in meta and rep not in keep:
+                        keep.add(rep)
+                        add_chain(rep)
+                        grown = True
         for ids in groups.values():
             if keep & set(ids):
                 keep |= {i for i in ids if i in t_ids}
@@ -604,7 +838,7 @@ def main(argv=None):
 
     out = Path(a.out) if a.out else rb / 'rows.json'
     gifs = a.evidence == 'gif'
-    b = Builder(acquire=a.acquire, base=out.parent, gifs=gifs)
+    b = Builder(acquire=a.acquire, base=out.parent, gifs=gifs, segdir=a.segments_dir)
     plan = {'game_id': '01006A800016E000', 'start': 'home-ssbu-selected', 'backend': 'hardware',
             'source': 'switch-hw-runbook (generated by ssbu-switch-remote/tools/runbook_rows_json.py)',
             'segments': {}, 'gates': {'training': dict(TRAINING_GATE), 'tr-menu': dict(MENU_GATE)},
@@ -613,9 +847,15 @@ def main(argv=None):
         plan['session_recording'] = dict(SESSION_RECORDING)
     live_where, live_gates = ({}, {}) if (a.no_poll or a.acquire) else load_live(rb)
     plan['gates'].update(live_gates)
+    if fixtures or not a.no_settle:
+        plan['gates'].update(load_fixture_gates(rb))
     for name, recipe in TR_SEGMENTS.items():
         b.segments[name] = {'recipe': recipe, 'cap': 15}
-    missing, unordered, gotos, merged = [], [], 0, {}
+        if a.segments_dir != 'segments':
+            b.segments[name]['file'] = f'{a.segments_dir}/{name}.edenmacro.json'
+    missing, unordered, gotos, merged, clean_skipped = [], [], 0, {}, []
+    active, setup_row, unmet, setup_rows, undefined = set(), {}, [], [], []
+    settle = {'run': f'{FIXTURE_HOOK}:settle', 'check': True}
     polled = {'menu_gates': 0, 'live_gates': {}, 'trailing_s_dropped': 0.0}
     # a group "## ... (showcase:NAME)": the ids of its "Run order:" line (not ids its prose mentions)
     showcase = {i: m.group(1) for m in re.finditer(r'^## .*\(showcase:([\w-]+)\)\s*\n+Run order: (.*)$', session_text,
@@ -623,6 +863,36 @@ def main(argv=None):
     r_presses = {}
     cur_page, dirty = None, True
     out_rows = []
+
+    def settle_or_gate():
+        return [dict(settle)] if not a.no_settle else [{'gate': 'training'}]
+
+    def emit_setup(sid, rid):
+        """The runner row `FX-nn-for-<rid>`: the setup's own steps behind a settle; its receipt is the row's proof."""
+        nonlocal cur_page, dirty, gotos
+        s = fixtures[sid]
+        sr_id = f'{sid}-for-{rid}'
+        toks = s['toks']
+        if not a.no_poll:
+            toks, st = poll_rewrite(sr_id, toks, {})
+            polled['menu_gates'] += st['menu']
+            polled['trailing_s_dropped'] += st['trailing_s']
+        steps = b.body(sr_id, toks)
+        pages = sum(1 for t in s['toks'] for x in t if x.startswith('page:'))
+        gotos += pages
+        if pages:
+            r_presses[sr_id] = 2
+        clean = [] if a.no_clean_state else [{'run': f'{CLEAN_HOOK}:ensure_clean', 'check': True}]
+        out_rows.append({'id': sr_id, 'name': f'fixture {sid}: {s["name"]} (for {rid})', 'covers': [],
+                         'start': 'training', 'chained': [], 'fixture': sid,
+                         'steps': clean + settle_or_gate() + steps, 'own_from': len(clean) + 1})
+        setup_row[sid] = sr_id
+        setup_rows.append(sr_id)
+        active.add(sid)
+        active.difference_update(s['invalidates'])
+        cur_page = last_page_token(s['toks']) or cur_page
+        dirty = True
+
     for rid in run_ids:
         m = meta[rid]
         if not m['toks']:
@@ -638,16 +908,42 @@ def main(argv=None):
             if st['live']:
                 polled['live_gates'][rid] = st['live']
         steps = b.body(rid, toks)
+        fx_here = [] if not fixtures else FX_ID.findall(m['fields'].get('Fixture-setup', ''))
         if m['start'] == 'chain' and out_rows:
             host = out_rows[-1]
             host['covers'] = sorted(set(host['covers']) | {rid, *covers[rid]})
             host['chained'].append(rid)
             host['steps'] += steps
             merged[rid] = host['id']
+            host.setdefault('modes', set()).update(modes_of(rid, m['fields']))
+            if m['fields'].get('Expected'):
+                host['expected'] = ' | '.join(x for x in (host.get('expected'), f'{rid}: {m["fields"]["Expected"]}')
+                                              if x)
+            if fx_here:
+                undefined.append(f'{rid}: a chained row runs inside its host; name {fx_here} on the host')
         else:
+            needs = []
+            if fixtures:
+                for sid in fx_here:
+                    if sid not in fixtures:
+                        undefined.append(f'{rid}: {sid} is not in rows/{FIXTURE_ROWS}')
+                for sid in [x for x in fx_here if x in fixtures]:
+                    if fixtures[sid]['scope'] == 'row' or sid not in active:
+                        emit_setup(sid, rid)
+                    needs.append(setup_row[sid])
+                done = {r['id'] for r in out_rows} | set(merged)
+                for n in ids_of(m['fields'].get('Needs', '')):
+                    rep = rep_of.get(alias.get(n, n), alias.get(n, n))
+                    rep = merged.get(rep, rep)
+                    if rep not in done:
+                        unmet.append(f'{rid} needs {n} ({rep}), which does not run before it')
+                    elif rep not in needs:
+                        needs.append(rep)
             pre, start = [], m['start']
             page = m['page']
             if page and (start == 'tr-menu' or dirty or page != cur_page):
+                if not a.no_settle:
+                    pre.append(dict(settle))
                 pre.append({'run': f'{HOOK}:goto', 'args': {'page': page, 'open': start == 'tr-menu'}, 'check': True})
                 gotos += 1
                 # the menu reopens on the page used last: R presses from there (unknown after a page turn: 2)
@@ -658,11 +954,24 @@ def main(argv=None):
                 pre.append({'gate': 'tr-menu'})
             else:
                 start = 'training'
-                pre.append({'gate': 'training'})
+                pre += settle_or_gate()
+            if not a.no_clean_state:
+                if start == 'tr-menu' and not any(s.get('run', '').endswith(':goto') for s in pre):
+                    clean_skipped.append(rid)  # starts inside the menu another row left open: no home before it
+                else:  # before every row: no TR mode / menu / keyboard left on (still dirty after the reset: raise)
+                    pre.insert(0, {'run': f'{CLEAN_HOOK}:ensure_clean', 'check': True})
+            if needs:
+                pre.insert(0, {'run': f'{FIXTURE_HOOK}:require', 'args': {'rows': needs}})
             if rid in showcase:  # SESSION.md group "(showcase:NAME)": a mark + showcase.jsonl line as it starts
                 pre.insert(0, {'run': f'{HOOK}:showcase', 'args': {'name': showcase[rid], 'row': rid}})
             row = {'id': rid, 'name': m['name'], 'covers': sorted(covers[rid]), 'start': start, 'chained': [],
-                   'steps': pre + steps}
+                   'steps': pre + steps, 'modes': set(modes_of(rid, m['fields'])), 'own_from': len(pre)}
+            if m['fields'].get('Expected'):
+                row['expected'] = m['fields']['Expected']
+            if m['fields'].get('Verdict'):
+                row['verdict_hint'] = m['fields']['Verdict'].split()[0].lower()
+            if needs:
+                row['requires'] = needs
             if rid in showcase:
                 row['showcase'] = showcase[rid]
             if start == 'tr-menu':
@@ -672,6 +981,24 @@ def main(argv=None):
             cur_page = m['page']
         cur_page = last_page_token(m['toks']) or cur_page
         dirty = turns_pages(m['toks'])
+        if fixtures:  # what this row leaves behind: `Fixture-dirty: FX-01` (or `*`) puts those setups out of force
+            left = m['fields'].get('Fixture-dirty', '')
+            if left.strip().startswith('*'):
+                active.clear()
+            active.difference_update(FX_ID.findall(left))
+    if unmet or undefined:
+        raise SystemExit('fixture errors:\n  ' + '\n  '.join(undefined + unmet))
+    for row in out_rows:
+        modes = sorted(row.pop('modes', set()) or [])
+        own_from = row.pop('own_from', 0)
+        if modes:
+            row['modes_on'] = modes
+            if not a.no_clean_state:  # a row that turns a mode on ends by turning it off, verified clean
+                row['steps'].append({'run': f'{CLEAN_HOOK}:mode_off', 'args': {'modes': modes}, 'check': True})
+        row['shots'] = labelled_shots(row['steps'], own_from)
+    vocab_errors = check_vocabulary(out_rows, b, effect_gates, effect_marks)
+    if vocab_errors:
+        raise SystemExit('effect-gate vocabulary errors:\n  ' + '\n  '.join(vocab_errors))
     rows_out = [dict(BOOT_ROW), *out_rows, dict(CLOSE_ROW)]
     for i, row in enumerate(rows_out):
         mark_checks(row['steps'])
@@ -686,6 +1013,25 @@ def main(argv=None):
     plan['rows'] = rows_out
     plan['segments'] = b.segments
     plan['gates'].update(b.gates)
+    used = {g for names in b.checks.values() for g in names}
+    for name, gate in effect_gates.items():
+        if name in used:  # only the gates this plan's rows check (a --only plan carries no unused gates)
+            plan['gates'][name] = gate
+    plan['require_effect'] = True  # runner: a row with no passed effect gate (and no judge PASS) is RAN-UNVERIFIED
+    if a.stop_after:
+        plan['stop_after_consecutive_failures'] = a.stop_after
+    if a.judge:
+        plan['judge'] = {'cmd': a.judge, 'frames': ['start', 'mid', 'end']}
+    if not a.no_clean_state:
+        plan['recover'] = [{'run': f'{HOOK}:home', 'check': True}, {'run': f'{CLEAN_HOOK}:ensure_clean', 'check': True}]
+        for name, recipe in CLEAN_SEGMENTS.items():
+            plan['segments'].setdefault(name, {'recipe': recipe, 'cap': 15})
+            if a.segments_dir != 'segments':
+                plan['segments'][name].setdefault('file', f'{a.segments_dir}/{name}.edenmacro.json')
+    if fixtures:
+        if a.no_clean_state:
+            plan['recover'] = [{'run': f'{HOOK}:home', 'check': True}]
+        plan['fixtures'] = {'setups': sorted(fixtures), 'rows': setup_rows}
     old = json.loads(out.read_text()) if out.exists() else {}
     for name, seg in plan['segments'].items():  # keep compiled files whose recipe is unchanged
         prev = old.get('segments', {}).get(name)
@@ -706,6 +1052,11 @@ def main(argv=None):
                       'gates': len(plan['gates']), 'goto_steps': gotos, 'chained': merged,
                       'no_commands': missing, 'not_in_session': unordered, 'held_for_operator': sorted(held),
                       'home_in_row': sorted(set(HOME_ROWS)), 'stills_in_a_hold': b.held_stills,
+                      'effect_checked_rows': sum(1 for r in out_rows if any(
+                          plan['gates'].get(s.get('gate'), {}).get('effect') for s in walk_steps(r['steps']))),
+                      'expected_rows': sum(1 for r in out_rows if r.get('expected')),
+                      'mode_off_rows': [r['id'] for r in out_rows if r.get('modes_on')],
+                      'clean_state_skipped': clean_skipped,
                       'evidence': a.evidence, 'menu_gates': polled['menu_gates'],
                       'live_gates': polled['live_gates'], 'trailing_s_dropped': round(polled['trailing_s_dropped'], 1),
                       'model_total_s': round(sum(est.values())), 'model_total_h': round(sum(est.values()) / 3600, 2),

@@ -307,6 +307,8 @@ class ObsCapture:
                    after the event) is that file's 0. closed = the file the split ended, once its size held.
                    No event within the cap: split_ok false, error split_unacknowledged (never a Start/Stop instead).
                    late_paths: RecordFileChanged events that arrived outside a split (a late acknowledgement).
+          ensure -> {active_before, restarted, path, started_wall?}: at a row start, StartRecord (confirmed active)
+                   when OBS is not recording; raises when it can't start
           stop  -> {path, stopped_wall, finalized, was_active, late_paths}"""
         now = time.time()
         status = self.client.request('GetRecordStatus')
@@ -314,6 +316,14 @@ class ObsCapture:
         if op == 'start':
             return {'started_wall': self.start_confirmed(params.get('idle_cap', 20.0)), 'already_active': False,
                     'path': self.current_file}
+        if op == 'ensure':
+            # Before a row's first input: never run a row unrecorded. OBS idle (stopped by hand, a crash, a lost
+            # output) -> StartRecord and return only once it IS recording (start_confirmed); an ObsError otherwise.
+            if active:
+                return {'active_before': True, 'restarted': False, 'path': self.current_file}
+            started = self.start_confirmed(params.get('idle_cap', 20.0), params.get('cap_s', 5.0))
+            return {'active_before': False, 'restarted': True, 'started_wall': started, 'path': self.current_file,
+                    'rec_ms': 0}
         if op in ('split', 'stop'):
             self.client.pump(0.05)  # an event in flight now is a late one, not this split's
             late = self._late_file_changes()

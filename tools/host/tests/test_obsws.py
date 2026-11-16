@@ -370,6 +370,21 @@ class Obs(unittest.TestCase):
         self.assertEqual(after['prev_path'], str(self.tmp / 'rec-2.mp4'))
         self.assertEqual(after['new_path'], str(self.tmp / 'rec-3.mp4'))
 
+    def test_ensure_restarts_a_stopped_recording_and_raises_when_it_cannot(self):
+        cap = obsws.ObsCapture(self.client())
+        types = lambda: [c[0] for c in self.obs.calls]  # noqa: E731
+        idle = cap.handle('recording.session_ensure', {})
+        self.assertEqual((idle['active_before'], idle['restarted']), (False, True))
+        self.assertTrue(self.obs.session_active)  # returned only once OBS reported the output active
+        self.assertEqual(idle['path'], str(self.tmp / 'rec-1.mp4'))  # from RecordStateChanged STARTED
+        again = cap.handle('recording.session_ensure', {})
+        self.assertEqual((again['active_before'], again['restarted']), (True, False))
+        self.assertEqual(types().count('StartRecord'), 1)
+        self.obs.session_active = False
+        self.obs.refuse_start, self.obs.start_anyway = 2, False
+        with self.assertRaises(obsws.ObsError):
+            cap.handle('recording.session_ensure', {'idle_cap': 2})
+
     def test_split_refused_when_splitting_is_off_or_not_recording(self):
         cap = obsws.ObsCapture(self.client())
         idle = cap.handle('recording.session_split', {'label': 'A'})
