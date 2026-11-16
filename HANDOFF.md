@@ -10,6 +10,18 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **~18:40Z REFOCUS (the operator: the HW run was "just clicking around").** The old strict plan is STOPPED at a row
+  boundary (the session lane keeps the claim/capture; `switch-hw-session-2/out` keeps its receipts). A NEW plan of in-game
+  FEATURE EFFECT rows (before → the input → the visible gameplay result), one per FEATURE-LEDGER feature + the rc.15
+  features, ported from the Eden recipes. Menu-only rows → `$RB/features/EDEN-COVERED.md` (one menu smoke row kept).
+  - The feature-plan lead (Opus, with Sonnet section authors) writes `$RB/rows-v3/`, `$RB/features/plan-<n>.json` (dry-run
+    READY) + FEATURE-MAP.md, and messages the session lane per section; the lane runs each with the same `--out`.
+  - The exact KNOWN-ISSUE signatures are (a)-(f): (a) P1+CPU in one visit, (b) the Player Swapping chord gate, (c) the BTT
+    zoom, (d) the BTT banner, (e) projectiles vs targets, (f) no CPU-cycle busy notice. Anything else is FAIL/SETUP-SUSPECT.
+  - Overlay relabels: FX-01-for-FS-01, FS-39, FS-54 → SETUP-SUSPECT; FS-57 → FAIL (possible product finding: the
+    count stays 4 after a menu open/close); FS-04 → (f).
+  - Clean-state fixes: BTT/Eggs Off read-back; Combo helper is a 2-value toggle (one press + read, cap 2); SC-01 waits
+    per press; S-BOOT gets an expected line.
 - **17:34Z CORE READY (INBOX 40979); WAITING FOR THE PRIMARY'S "SWITCH RELEASED" (the operator retrying P1 cycling by hand).**
   Launch = a fresh session-lane worker running, via pwsh:
   1. `/usr/bin/python3 -I /tmp/pb-clip/tools/eden-runner/switch_hw.py up /home/user/smash-training-lobby/artifacts/switch-hw-session-2` (refuses without a live Skyline line in 30 s);

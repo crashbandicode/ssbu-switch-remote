@@ -572,6 +572,9 @@ class Builder:
             elif t.startswith('p1:'):  # the P1 HUD portrait is this fighter, else the row fails (tr_seek.p1_is)
                 close_gif()
                 out.append({'run': f'{SEEK_HOOK}:p1_is', 'args': {'fighter': t[3:]}, 'check': True})
+            elif t.startswith('grid:'):  # the Player Character grid cursor is on this fighter (tr_seek.grid_cursor_is)
+                close_gif()
+                out.append({'run': f'{SEEK_HOOK}:grid_cursor_is', 'args': {'fighter': t[5:]}, 'check': True})
             elif t == 'practice-off':  # F&S > Practice games: Eggs-ercise and BTT SET Off, each read back by image
                 close_gif()
                 out.append({'run': f'{CLEAN_HOOK}:practice_games_off', 'check': True})
