@@ -143,6 +143,15 @@ Probable root cause: the listener was bound before DHCP. r4 (`9d8a027`, self-dia
   - End-to-end latency (UART press → first changed OBS frame): B 127–151 ms, Right 157–190 ms, Left 150–162 ms (`tools/host/pad_latency_regions.py`).
   - **A wired pad does NOT wake the sleeping console:** 10 HOME presses at 04:33Z did nothing; the operator woke it.
 
+## FTP-PLAN-r1 executed (2026-11-16 04:51–05:05Z)
+
+- **Console:** IP **172.30.254.79**, wired, LAN MAC **<device-mac-1>** (System Settings → Internet). .182 (<device-mac-3>) is NOT this console.
+- **Route:** stills in `ssbu-switch-remote-work/ftp-r1/shots/`. HOME → Album (hbmenu v3.6.1, applet mode) → DBI 912-en → Start FTP server → **Browse SD card** → ftp://<ftp-host>:<ftp-port> (ftp-guest).
+- **Read-only fetch:** `artifacts/switch-remote-card/ftp-fetch-r1/{listing,files,files-tr}`. Every file was read twice with an equal sha256.
+- **r3 sysmodule.log:** 3 boots, each `starting` then `serving port=47130` at ~18 s uptime. No errors and no crash reports, so init succeeded and the listener died silently afterwards (bound before the wired link's address).
+- **f1 done:** `4200000000005352/flags/boot2.flag` removed (readback absent); 22 other watched files unchanged. Receipts: `artifacts/switch-remote-card/install-f1-ftp-retire-sysmodule-boot2/`.
+- **Fixed on hardware:** DBI's NLST returns ABSOLUTE paths (`exists()` fixed; the fake server mimics it). The pad_nav A-guard requires the HOME grey background (a DBI teal dialog was a false positive). DBI 'Exit' returns straight to HOME.
+
 ## Pi Zero 2 W (operator note ~03:53Z): evaluated, DESIGN.md 13a
 
 Recommendation: straight to the ESP32-S3; the Pi is the fallback (only if the ESP32 can't present the pad). `pi://` (`usbpad.PiClient`) and padsim's TCP mode (the Pi daemon's shape) are built and tested; the Pi daemon, gadget script and SD image are NOT built.

@@ -1,5 +1,5 @@
 """A minimal FTP server over a local folder for own_install's FTP transport tests. It mimics DBI's quirks that matter
-here: NLST ignores its path argument (lists the current directory), and RNTO onto an existing file can be refused
+here: NLST ignores its path argument (lists the current directory) and returns absolute paths, and RNTO onto an existing file can be refused
 (`refuse_overwrite`). Passive mode only; one thread per control connection."""
 import socket
 import socketserver
@@ -95,7 +95,9 @@ class FakeFtp:
                 _, lp = local('.')
                 say('150 listing')
                 c = data_conn()
-                c.sendall(''.join(p.name + '\r\n' for p in sorted(lp.iterdir())).encode())
+                # DBI returns absolute paths (checked on the console 2026-11-16)
+                base = local('.')[0].rstrip('/')
+                c.sendall(''.join(f'{base}/{p.name}\r\n' for p in sorted(lp.iterdir())).encode())
                 c.close()
                 say('226 done')
             elif cmd == 'RETR':

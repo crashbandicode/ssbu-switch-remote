@@ -264,7 +264,7 @@ class Ftp:
             parent, name = rel.rsplit('/', 1) if '/' in rel else ('', rel)
             if not self._is_dir(f, parent):
                 return False
-            return name in f.nlst()
+            return name in [n.rstrip('/').rsplit('/', 1)[-1] for n in f.nlst()]  # DBI's NLST returns absolute paths
         finally:
             f.close()
 
