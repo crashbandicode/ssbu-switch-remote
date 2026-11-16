@@ -10,6 +10,13 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **~14:20Z READY TO LAUNCH, gated on the legend.** LIVE RECORDING PROOF PASS (INBOX 39830; client 91512f5, playbook 16cc318,
+  cutter ebde113 `tools/host/cut_session.py`). The legend install is fully staged: `card-jobs/l1-tr-legend/STEPS.md` (exact
+  commands A-D + rollback + the INSTALL.md template). Watchers in this session: the INBOX `^## .*LEGEND RELEASE READY` (not
+  ours), and a 30-min timer. **If the legend isn't ready by ~14:50Z, tell the primary** (it decides rc.15-first). After the
+  install: launch the ONE runner session (`switch_hw.py up` → `runner.py run $RB/rows.json …` → `down`; then
+  `cut_session.py <out>`), showcase rows first. Pending: the compression worker's newest-first reorder + LEG rows +
+  dry-run; the cutter worker drops the obsolete playbook-patch test.
 - **~14:00Z SESSION ORDER (the operator): newest first.** First after boot: (a) quicker CPU cycling (Character Cycles,
   several cycles), (b) Eggs-ercise, (c) Break the Targets, (d) input drills (record/make/crop/grading appearing), then
   the LEG-* legend checks, then everything else newest → oldest by introducing release. During the session: post an INBOX
