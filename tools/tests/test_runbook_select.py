@@ -143,6 +143,35 @@ class Coverage(unittest.TestCase):
         self.assertEqual(out['run_est_min'], 0.7)
 
 
+class PilotReplacement(unittest.TestCase):
+    """A corrected copy of a pilot row (`Replaces: pilot F04`) runs instead of the pilot row."""
+
+    def test_pilot_cover_resolves_to_the_replacing_row(self):
+        rows = ROWS_REPLACE
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / 'rows').mkdir()
+            (d / 'rows' / 'p.md').write_text(rows)
+            loaded = rs.load_rows(d)
+        self.assertEqual(rs.pilot_aliases(loaded), {'F04': 'PF-04'})
+        p, _, _ = rs.select(['src/runtime/features/hitbox.rs'], loaded, [], [])
+        run, _ = rs.resolve(p, loaded)
+        self.assertEqual(run, {'PF-04': ['DC-29', 'PF-04']})
+
+
+ROWS_REPLACE = """### DC-29 Article hurtboxes
+- **Class:** HW
+- **Covered by:** pilot F04
+- **Code paths:** `src/runtime/features/hitbox.rs`
+### PF-04 Article hurtboxes, Eden setup
+- **Class:** HW
+- **Covered by:** self
+- **Replaces:** pilot F04
+- **Page:** Fighters & Stages
+- **Code paths:** `src/runtime/features/hitbox.rs`
+"""
+
+
 REPO = rs.TR_REPO
 REAL = rs.RUNBOOK / 'rows'
 

@@ -6,6 +6,9 @@
 paths are given directly (no git). The catalog is the runbook's `rows/*.md`: each `### <ID> <name>` section's
 `- **Code paths:**` (backticked globs, relative to the TR repo root), `- **Class:**`, `- **Est:**` and
 `- **Covered by:**` (`self` = executed row; `<ID>` = covered by that representative; `pilot F0x` = the 12-row pilot).
+A catalog row with `- **Replaces:** pilot F0x` (Class HW, self) is a corrected copy of that pilot row: `pilot F0x`
+resolves to it. `- **Page:**` and `- **Start gate:**` are read for runbook_rows_json.py. `--ids` prints only the run
+ids, comma-separated, for `runbook_rows_json.py --only`.
 
 Rules (conservative):
   1. a changed file matching a row's Code paths selects that catalog row;
@@ -26,7 +29,7 @@ RUNBOOK = Path('/home/user/smash-training-lobby/artifacts/switch-hw-runbook')
 TR_REPO = Path('/home/user/tr-fixes-20261113/a-full')
 ID = r'[A-Z]+-\d+[A-Za-z]?|F\d\d'
 HEAD_RE = re.compile(rf'^###\s+({ID})\s+(.*)$')
-FIELD_RE = re.compile(r'^\s*-\s+\*\*(Class|Code paths|Est|Fixture|Pilot|Covered by):\*\*\s*(.*)$')
+FIELD_RE = re.compile(r'^\s*-\s+\*\*(Class|Code paths|Est|Fixture|Pilot|Covered by|Replaces|Page|Start gate):\*\*\s*(.*)$')
 
 
 def load_globs(path):
@@ -54,7 +57,8 @@ def load_rows(runbook):
             m = HEAD_RE.match(line)
             if m:
                 cur = {'id': m.group(1), 'name': m.group(2).strip(), 'file': md.name, 'class': '', 'paths': [],
-                       'est': None, 'covered_by': 'self'}
+                       'est': None, 'covered_by': 'self', 'replaces': None, 'page': None, 'fixture': '',
+                       'start_gate': ''}
                 rows.append(cur)
                 continue
             if cur is None:
@@ -72,7 +76,22 @@ def load_rows(runbook):
                 cur['est'] = int(n.group()) if n else None
             elif key == 'Covered by':
                 cur['covered_by'] = parse_cover(val)
+            elif key == 'Replaces':  # a corrected copy of a pilot row: `pilot F04` resolves to this row
+                m = re.search(r'F\d\d', val)
+                cur['replaces'] = m.group() if m else None
+            elif key == 'Page':
+                cur['page'] = val.replace('`', '').strip() or None
+            elif key == 'Fixture':
+                cur['fixture'] = val
+            elif key == 'Start gate':
+                cur['start_gate'] = val
     return [r for r in rows if r['paths'] or r['class']]
+
+
+def pilot_aliases(rows):
+    """{'F04': 'PF-04'}: pilot rows that a corrected catalog row (`Replaces: pilot F04`, Class HW, self) runs instead."""
+    return {r['replaces']: r['id'] for r in rows
+            if r.get('replaces') and kind(r['class']) == 'HW' and r['covered_by'] == 'self'}
 
 
 def session_order(runbook):
@@ -125,6 +144,7 @@ def resolve(picked, rows):
     """Selected catalog rows -> the rows to execute. HW rows resolve through Covered by (a chain is followed);
     non-HW rows are reported, never executed."""
     by_id = {r['id']: r for r in rows}
+    alias = pilot_aliases(rows)
     run, non_hw = {}, []
     for r in picked.values():
         if kind(r['class']) != 'HW':
@@ -134,6 +154,7 @@ def resolve(picked, rows):
         while target in by_id and by_id[target]['covered_by'] != 'self' and target not in seen:
             seen.add(target)
             target = by_id[target]['covered_by']
+        target = alias.get(target, target)
         run.setdefault(target, []).append(r['id'])
     return run, non_hw
 
@@ -152,6 +173,8 @@ def main(argv=None):
     ap.add_argument('--runbook', default=str(RUNBOOK))
     ap.add_argument('--files', nargs='*')
     ap.add_argument('--json', action='store_true')
+    ap.add_argument('--ids', action='store_true', help='print only the run ids, comma-separated '
+                    '(for runbook_rows_json.py --only)')
     a = ap.parse_args(argv)
     runbook = Path(a.runbook)
     if a.files is None and not a.range:
@@ -171,6 +194,9 @@ def main(argv=None):
               'non_hw': [{'id': r['id'], 'class': r['class']} for r in non_hw], 'run_est_min': round(est / 60, 1)}
     if a.json:
         print(json.dumps(result, indent=1))
+        return 0
+    if a.ids:
+        print(','.join(run_ids))
         return 0
     print(f"range {a.range or '(files)'}: {len(changed)} changed file(s); catalog {len(rows)} rows, "
           f"{len(picked)} selected")
