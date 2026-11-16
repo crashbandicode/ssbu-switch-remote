@@ -190,18 +190,36 @@ class CardOverDbiFtp(Card):
         self.assertGreaterEqual(self.ftp.commands.count('TYPE'), self.ftp.commands.count('USER'))
 
     def test_fetch_is_read_only(self):
-        (self.card / 'ultimate/switch-remote').mkdir(parents=True)
-        (self.card / 'ultimate/switch-remote/sysmodule.log').write_bytes(b'boot breadcrumb\n')
+        sr = self.card / 'ultimate/switch-remote'
+        (sr / 'backups').mkdir(parents=True)
+        (sr / 'sysmodule.log').write_bytes(b'boot breadcrumb\n')
+        (sr / 'config.txt').write_bytes(b'token=secretsecretsecret\n')
+        (sr / 'backups/pre-1.exefs.nsp').write_bytes(b'old binary')
+        (self.card / 'ultimate/training_rooms').mkdir(parents=True)
+        (self.card / 'ultimate/training_rooms/events.log').write_bytes(b'x' * 100)
         out = self.tmp / 'fetched'
-        with contextlib.redirect_stdout(io.StringIO()):
-            oi.main(['fetch', str(out), '--transport', 'ftp', '--root', self.root, '--path', 'ultimate/switch-remote',
-                     '--path', 'atmosphere/crash_reports'])
+        orig = oi.FETCH_MAX_BYTES
+        oi.FETCH_MAX_BYTES = 50
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                oi.main(['fetch', str(out), '--transport', 'ftp', '--root', self.root, '--path', 'ultimate/switch-remote',
+                         '--path', 'atmosphere/crash_reports', '--list', 'ultimate', '--list', 'atmosphere/contents/01006A800016E000'])
+        finally:
+            oi.FETCH_MAX_BYTES = orig
         m = json.loads((out / 'fetch-manifest.json').read_text())
         self.assertEqual(list(m['files']), ['ultimate/switch-remote/sysmodule.log'])
+        self.assertEqual(m['skipped'], {'ultimate/switch-remote/backups/pre-1.exefs.nsp': 'excluded',
+                                        'ultimate/switch-remote/config.txt': 'excluded'})
         self.assertEqual(m['absent'], ['atmosphere/crash_reports'])
+        self.assertIn('ultimate/training_rooms/events.log', m['listings']['ultimate'])
+        self.assertIn(OTHER, m['listings']['atmosphere/contents/01006A800016E000'])
         self.assertEqual((out / 'ultimate/switch-remote/sysmodule.log').read_bytes(), b'boot breadcrumb\n')
+        self.assertFalse((out / 'ultimate/switch-remote/config.txt').exists())
+        self.assertEqual(self.ftp.commands.count('RETR'), 2)  # one file, read twice
         writes = {'STOR', 'DELE', 'RNFR', 'RNTO', 'MKD'}
         self.assertFalse(writes & set(self.ftp.commands))
+        with self.assertRaises(SystemExit):
+            oi.fetch(out, oi.transport('ftp', self.root), ['ultimate'])  # an existing manifest is never overwritten
 
     def test_credentials_come_from_the_bookmark_and_are_never_printed(self):
         oi.ftp_credentials = self._creds

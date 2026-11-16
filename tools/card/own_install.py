@@ -492,21 +492,45 @@ def table_md(receipt):
     return '\n'.join(lines)
 
 
-def fetch(out, card, paths):
-    """READ-ONLY copies of card files/folders into `out`, with a sha256 manifest. Nothing on the card is written."""
+FETCH_EXCLUDE = ('*/config.txt', '*/backups/*', '*.sr-part')  # our token file, our rollback binaries, part files
+FETCH_MAX_BYTES = 4 << 20
+
+
+def fetch(out, card, paths, lists=(), exclude=FETCH_EXCLUDE, max_bytes=FETCH_MAX_BYTES):
+    """READ-ONLY. `paths`: files or folders copied into `out`; `lists`: folders only listed (names, recursively).
+    Every file is read twice and both reads must have the same sha256 (a truncated or interrupted transfer cannot pass).
+    Files matching `exclude` or larger than `max_bytes` are recorded, not kept. Nothing on the card is written."""
+    import fnmatch
     out = Path(out)
+    if (out / 'fetch-manifest.json').exists():
+        raise SystemExit('refused: fetch-manifest.json exists; use a new output folder')
+    manifest = {'time': now(), 'files': {}, 'listings': {}, 'skipped': {}, 'absent': [], 'read_twice': True}
+    for rel in lists:
+        rel = rel.strip('/')
+        manifest['listings'][rel] = card.listdir(rel)
     files = []
     for rel in paths:
         rel = rel.strip('/')
         listed = card.listdir(rel)
-        files += listed if listed else ([rel] if card.exists(rel) else [])
-    manifest = {'time': now(), 'files': {}, 'absent': [p.strip('/') for p in paths if not any(
-        f == p.strip('/') or f.startswith(p.strip('/') + '/') for f in files)]}
+        found = listed if listed else ([rel] if card.exists(rel) else [])
+        if not found:
+            manifest['absent'].append(rel)
+        files += found
     for rel in sorted(set(files)):
-        data = card.read(rel)
+        if any(fnmatch.fnmatch('/' + rel, pat) or fnmatch.fnmatch(rel, pat) for pat in exclude):
+            manifest['skipped'][rel] = 'excluded'
+            continue
+        first = card.read(rel)
+        if len(first) > max_bytes:
+            manifest['skipped'][rel] = f'{len(first)} bytes > {max_bytes}'
+            continue
+        second = card.read(rel)
+        if sha(first) != sha(second):
+            raise SystemExit(f'refused: two reads of {rel} differ ({sha(first)[:16]} vs {sha(second)[:16]})')
         (out / rel).parent.mkdir(parents=True, exist_ok=True)
-        (out / rel).write_bytes(data)
-        manifest['files'][rel] = {'bytes': len(data), 'sha256': show(rel, sha(data))}
+        (out / rel).write_bytes(first)
+        manifest['files'][rel] = {'bytes': len(first), 'sha256': show(rel, sha(first))}
+    out.mkdir(parents=True, exist_ok=True)
     (out / 'fetch-manifest.json').write_text(json.dumps(manifest, indent=1) + '\n')
     return manifest
 
@@ -518,10 +542,11 @@ def main(argv=None):
     ap.add_argument('--transport', choices=['ums', 'mtp', 'ftp'], required=True)
     ap.add_argument('--root', required=True)
     ap.add_argument('--path', action='append', default=[], help='fetch: a card file or folder to copy (repeatable)')
+    ap.add_argument('--list', action='append', default=[], help='fetch: a card folder to list only (repeatable)')
     a = ap.parse_args(argv)
     card = transport(a.transport, a.root)
     if a.phase == 'fetch':
-        r = fetch(a.job, card, a.path)
+        r = fetch(a.job, card, a.path, a.list)
         print(json.dumps(r, indent=1))
         return 0
     if a.phase == 'preflight':
