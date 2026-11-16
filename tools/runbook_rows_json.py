@@ -24,6 +24,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import runbook_select as rs  # noqa: E402
 
 PILOT = Path('/home/user/smash-training-lobby/artifacts/switch-hw-ledger-rc15/PLAN.md')
+HOME_ROWS = []
+# harness-lib routes hooks (playbook tools/eden-runner, 1bd4ae1): the session boots and ends through them
+BOOT_ROW = {'id': 'S-BOOT', 'name': 'HOME -> SSBU -> main -> Training (routes hooks)', 'covers': [],
+            'steps': [{'run': 'routes:switch_boot', 'check': True}, {'run': 'routes:switch_to_training', 'check': True},
+                      {'run': 'routes:tr_menu', 'check': True}], 'evidence': ['boot log line', 'training HUD']}
+CLOSE_ROW = {'id': 'S-CLOSE', 'name': 'close SSBU -> HOME, SSBU selected', 'covers': [],
+             'steps': [{'run': 'routes:switch_close', 'check': True}], 'evidence': ['HOME']}
 
 
 def section_tokens(text, row_id):
@@ -85,10 +92,12 @@ def build_row(row_id, token_lists, name, covers):
                 if parts[0] == 'press' and len(parts) == 3 and set(parts[1].split('+')) & {'home', 'capture'}:
                     # HOME/Capture can't be in a pad macro (firmware ERR system_button): a backend call instead
                     # (harness-lib switch_hw: switch.launch / switch.terminate / system-button call)
+                    # harness-lib 1bd4ae1: HOME lives only in routes hooks; a HOME inside a row is the close route
                     flush()
-                    steps.append({'call': 'switch.button', 'params': {'button': parts[1], 'ms': int(parts[2])},
-                                  'todo': 'harness-lib: map to the hardware backend system-button call'})
-                    checked = False
+                    steps.append({'run': 'routes:switch_close', 'check': True,
+                                  'note': f'row pressed {parts[1]}: mapped to switch_close; review'})
+                    HOME_ROWS.append(row_id)
+                    checked = True
                 elif parts[0] == 'press' and len(parts) == 3:
                     item = {'buttons': parts[1], 'hold': int(parts[2]), 'gap': 0}
                     prev = recipe[-1] if recipe else None
@@ -154,10 +163,12 @@ def main(argv=None):
         plan['rows'].append(row)
         plan['segments'].update(segs)
         plan['gates'].update(gates)
+    plan['rows'] = [BOOT_ROW, *plan['rows'], CLOSE_ROW]
+    plan['start'] = 'home-ssbu-selected'
     out = Path(a.out) if a.out else rb / 'rows.json'
     out.write_text(json.dumps(plan, indent=1) + '\n')
     print(json.dumps({'out': str(out), 'rows': len(plan['rows']), 'segments': len(plan['segments']),
-                      'gates': len(plan['gates']), 'no_commands': missing}))
+                      'gates': len(plan['gates']), 'no_commands': missing, 'home_in_row': sorted(set(HOME_ROWS))}))
     return 0
 
 
