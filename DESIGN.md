@@ -217,8 +217,8 @@ backslashes. Reads come in 64 KiB chunks. Nothing is written.
   - Opt-in: nothing listens without `sd:/ultimate/switch-remote/config.txt` holding `token=` (16–64 chars).
   - Peers outside private IPv4 ranges are closed.
 - **Protocol.** `docs/PROTOCOL.md`.
-- **Runner backend.** `playbook-patch/0001` adds `switch://HOST:PORT` to the runner's client factory: 4 code
-  lines and a docstring, not applied to the playbook.
+- **Runner backend.** The playbook runner's own client factory selects this client for `usb://`, `pi://`,
+  `switch://` and `autopilot://` sockets (native since playbook f60448d; the earlier `playbook-patch/0001` is gone).
 - **Wrapper.** `tools/host/switch_test.py run ROWS --host IP` runs the unchanged runner in-process with one
   shared client, because the sysmodule serves one client at a time. It mirrors SD log files to local files
   for `log` gates (`--mirror diag_log=ultimate:training_rooms/events.log`).
@@ -295,7 +295,7 @@ stays host-tested.
 | NRO 0.2.0 (`scene_host`): cargo test / clippy -D warnings / no-default-features / skyline release / diag | Yoga, `remote-gate.ps1`, `3d6e1bb` | 22/0, 0, 0, 36,864 B (sha256 `d4581396…`), 36,864 B |
 | Sysmodule: devkitA64 r30 + libnx 4.12.0, `-Wall -Wextra -Werror` | Yoga, `tools/build_sysmodule.ps1`, `1cda5f7` (r5) | exefs.nsp 158,967 B (sha256 `b4f634a8…`), 0 warnings, `check_nsp` ok |
 | Sysmodule core | host g++ | 240 checks, 0 failures |
-| Host (autopilot driver vs a fake sys-autopilot, scene receiver over TCP, image gate, loopback Service, capture, OBS fake, GIF, runner patch) | ubuntu-surface | 94 tests OK |
+| Host (autopilot driver vs a fake sys-autopilot, scene receiver over TCP, image gate, loopback Service, capture, OBS fake, GIF, runner factory) | ubuntu-surface | 94 tests OK |
 | Card receipt tool (UMS and MTP via gio, incl. allowlisted removals) | ubuntu-surface | 16 tests OK |
 | switch-pad firmware (ESP-IDF v5.5.6, esp_tinyusb 1.7.6~2, TinyUSB 0.21.0~6; our component `-Wall -Wextra -Werror`) | Yoga, `tools/build_pad.ps1`, `433f357` | 0 warnings; `switch_pad.bin` 234,928 B (sha256 `ab516cdb…`), bootloader `219e7ee1…`, partition table `7f00b6c0…` |
 | switch-pad core | host g++ (`make -C firmware test`) | 84 checks, 0 failures |
@@ -438,7 +438,7 @@ the kit with camera and SD card): `C/C_Tutorial.pdf` p.145 "Difference between U
   timing and the protocol. A host simulator (`firmware/host_sim/`) serves the same core on a pseudo-terminal for the
   Python client tests.
 
-**Host backend `usb://<serial device>`** (`tools/host/usbpad.py`, `make_client`, runner patch, `switch_test.py`,
+**Host backend `usb://<serial device>`** (`tools/host/usbpad.py`, `make_client`, runner factory, `switch_test.py`,
 `smoke.py --backend usb`).
 - **Interface.** The same edenctl surface as the other backends: `input.*` maps to BTN/STICK/RESET, and
   `macro.play` uploads the samples and plays them on the device timer (unchanged runner macros).
@@ -519,7 +519,7 @@ holds the firmware sha256s, the esptool output and the chip MAC.
 | "lets you remote control the switch like you do in eden" | HDLS virtual pad; edenctl leases and macros; edenctl-compatible client | `test_input_button_tap_maps_to_btn`, `test_macro_events_parity_with_eden_file`, `test_disconnect_releases_held_input` |
 | "a native screenshot feature that sends the screenshot over the wire" | capture card through OBS or capd behind `ui.screenshot` | `test_write_png_scales_to_width`, `test_screenshot_goes_to_capd`, `test_switch_client_routes_screenshots_to_obs` |
 | "so you can see where you are and iterate" | runner backend; status from both sides | `test_runner_factory_switch_scheme`, `test_status_merges_sysmodule_and_capture` |
-| "it would adapt eden automation" | `switch://` client in the unchanged runner, same rows and segments | `test_macro_events_parity_with_eden_file`, `test_runner_factory_switch_scheme` |
+| "it would adapt eden automation" | `switch://` client in the unchanged runner (native factory), same rows and segments | `test_macro_events_parity_with_eden_file`, `test_runner_factory_switch_scheme` |
 | "this way you can do hardware testing too" | LAN server, token, private peers, fail-closed gate | `peers_are_private_only`, `config_requires_token`, `test_online_scene_refuses`, `test_stale_scene_closes_the_gate_and_releases_input` |
 | "reconnecting via dbi as needed if there's a crash" | crash detection, logs, relaunch, playbook installers | `test_dropped_connection_reports_not_running`, `test_list_and_file_roots` |
 | "it should have a sysmmodule s that you can launch the game yourself and get the logs if it crashes" | sysmodule LAUNCH/TERMINATE/RELAUNCH with the first-tile check; LIST/FILE over crash and plugin logs | `test_launch_only_without_application`, `test_launch_refused_unless_ssbu_is_the_first_tile`, `test_terminate_and_exit_count`, `test_list_and_file_roots` |

@@ -462,35 +462,34 @@ class Capture(unittest.TestCase):
 class RunnerFactory(unittest.TestCase):
     @unittest.skipUnless((PLAYBOOK / 'tools' / 'eden-runner' / 'runner.py').exists(), 'playbook not cloned')
     def test_runner_factory_switch_scheme(self):
-        """The proposed playbook patch applies to the runner and selects SwitchClient for switch:// sockets."""
-        with tempfile.TemporaryDirectory() as d:
-            tree = Path(d) / 'pb'
-            shutil.copytree(PLAYBOOK / 'tools' / 'eden-runner', tree / 'tools' / 'eden-runner')
-            patch = REPO / 'playbook-patch' / '0001-runner-switch-backend.patch'
-            subprocess.run(['git', 'apply', str(patch)], cwd=tree, check=True)
-            env_before = os.environ.get('SWITCH_REMOTE_DIR')
-            os.environ['SWITCH_REMOTE_DIR'] = str(HOST)
-            sys.path.insert(0, str(tree / 'tools' / 'eden-runner'))
-            try:
-                import importlib
-                runner = importlib.import_module('runner')
-                tokfile = Path(d) / 'token'
-                tokfile.write_text(TOKEN)
-                os.environ['SWITCH_REMOTE_TOKEN_FILE'] = str(tokfile)
-                client = runner.default_client_factory()('switch://172.30.254.92:47130')
-                self.assertIsInstance(client, sr.SwitchClient if 'switch_remote' not in sys.modules
-                                      else sys.modules['switch_remote'].SwitchClient)
-                self.assertEqual((client.conn.host, client.conn.port), ('172.30.254.92', 47130))
-            finally:
-                sys.path.remove(str(tree / 'tools' / 'eden-runner'))
-                sys.modules.pop('runner', None)
-                sys.modules.pop('harness', None)
-                os.environ.pop('SWITCH_REMOTE_TOKEN_FILE', None)
-                if env_before is None:
-                    os.environ.pop('SWITCH_REMOTE_DIR', None)
-                else:
-                    os.environ['SWITCH_REMOTE_DIR'] = env_before
-
+        """The playbook runner's own client factory (usb:// support is native there) selects our UsbClient for a
+        usb:// socket and does not open the serial device while building it."""
+        import importlib
+        from unittest import mock
+        runner_dir = str(PLAYBOOK / 'tools' / 'eden-runner')
+        env_before = os.environ.get('SWITCH_REMOTE_DIR')
+        os.environ['SWITCH_REMOTE_DIR'] = str(HOST)
+        sys.path.insert(0, runner_dir)
+        try:
+            runner = importlib.import_module('runner')
+            self.assertIn('usb://', runner.SWITCH_SCHEMES)
+            import usbpad
+            with mock.patch.object(usbpad.SerialConnection, 'open',
+                                   side_effect=AssertionError('serial device opened')) as opened:
+                client = runner.default_client_factory()('usb:///dev/ttyACM0')
+            opened.assert_not_called()
+            self.assertIsInstance(client, usbpad.UsbClient)
+            self.assertIsInstance(client, sys.modules['switch_remote'].SwitchClient)
+            self.assertEqual(client.serial_device, '/dev/ttyACM0')
+            self.assertEqual(client.conn.path, '/dev/ttyACM0')
+        finally:
+            sys.path.remove(runner_dir)
+            sys.modules.pop('runner', None)
+            sys.modules.pop('harness', None)
+            if env_before is None:
+                os.environ.pop('SWITCH_REMOTE_DIR', None)
+            else:
+                os.environ['SWITCH_REMOTE_DIR'] = env_before
 
 class Pure(unittest.TestCase):
     def test_button_names(self):

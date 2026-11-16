@@ -16,7 +16,7 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
   ours), and a 30-min timer. **If the legend isn't ready by ~14:50Z, tell the primary** (it decides rc.15-first). After the
   install: launch the ONE runner session (`switch_hw.py up` → `runner.py run $RB/rows.json …` → `down`; then
   `cut_session.py <out>`), showcase rows first. Pending: the compression worker's newest-first reorder + LEG rows +
-  dry-run; the cutter worker drops the obsolete playbook-patch test.
+  dry-run. (The obsolete playbook-patch and its test step are removed; the runner's native factory is tested.)
 - **~14:00Z SESSION ORDER (the operator): newest first.** First after boot: (a) quicker CPU cycling (Character Cycles,
   several cycles), (b) Eggs-ercise, (c) Break the Targets, (d) input drills (record/make/crop/grading appearing), then
   the LEG-* legend checks, then everything else newest → oldest by introducing release. During the session: post an INBOX
