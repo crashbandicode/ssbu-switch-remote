@@ -57,6 +57,8 @@ def main(argv=None):
     ap.add_argument('cmd', choices=['still', 'press'])
     ap.add_argument('args', nargs='+')
     ap.add_argument('--confirm-a', default='')
+    ap.add_argument('--launch-ssbu', action='store_true', help='A on HOME: only with the SSBU image gate passing')
+    ap.add_argument('--close-dialog', action='store_true', help='A on the close dialog: never on plain HOME')
     ap.add_argument('--device', default='/dev/ttyACM0')
     ap.add_argument('--out', default='/home/user/ssbu-switch-remote-work/ftp-r1')
     ap.add_argument('--settle-s', type=float, default=1.5)
@@ -92,12 +94,22 @@ def main(argv=None):
             if not a.confirm_a:
                 raise SystemExit('refused: A needs --confirm-a <the item the last still showed selected>')
             pre, v = still('pre-a-check')
-            if v['ok'] or game_row_selected(pre):
+            if a.launch_ssbu:
+                # SSBU launch (allowed by the primary 2026-11-16): only with SSBU itself selected, per the image gate
+                if not v['ok']:
+                    raise SystemExit(f'refused: --launch-ssbu but the still is not HOME with SSBU selected ({pre})')
+            elif a.close_dialog:
+                # 'Close' in the close-software dialog: never on a plain HOME screen (A there would launch)
+                if v['ok']:
+                    raise SystemExit(f'refused: --close-dialog but the still is plain HOME with SSBU selected ({pre})')
+            elif v['ok'] or game_row_selected(pre):
                 raise SystemExit(f'refused: A while a HOME game tile is selected ({pre})')
             rec['pre_a_still'] = pre
+            rec['mode'] = 'launch-ssbu' if a.launch_ssbu else 'close-dialog' if a.close_dialog else 'menu'
             rec['confirm_a'] = a.confirm_a
         with c.lock:
             c.conn.open()
+            rec['press_wall'] = time.time()
             reply = c.conn.call(f'press {ALLOWED[button]} {a.ms}')
         rec.update({'action': f'press {button} {a.ms}', 'reply': reply})
         time.sleep(a.settle_s)

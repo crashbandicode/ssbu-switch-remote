@@ -188,6 +188,56 @@ class Card(unittest.TestCase):
             self.run_tool('preflight', str(j3))
         self.assertIn('not a plugin NRO', str(cm.exception))
 
+    def test_bisect_move_out_and_back(self):
+        P = 'atmosphere/contents/01006A800016E000/romfs/skyline/plugins/'
+        D = 'ultimate/switch-remote/disabled/'
+        (self.card / NRO).write_bytes(b'our nro r1')
+        j = self.job('b1', {})
+        (j / 'moves.txt').write_text(f'# bisect step 1\n{NRO} -> {D}libssbu_switch_remote.nro\n')
+        self.run_tool('preflight', str(j))
+        self.assertEqual(self.run_tool('install', str(j)), 0)
+        r = json.loads((j / 'install-receipt.json').read_text())
+        row = r['files'][0]
+        self.assertEqual((row['action'], row['readback_ok'], row['src_absent'], r['other_files_changed']),
+                         ('moved', True, True, []))
+        self.assertFalse((self.card / NRO).exists())
+        self.assertEqual((self.card / D / 'libssbu_switch_remote.nro').read_bytes(), b'our nro r1')
+        self.assertEqual((j / 'before' / NRO).read_bytes(), b'our nro r1')
+        self.assertEqual((self.card / OTHER).read_bytes(), b'other plugin')
+        back = self.job('b1-rollback', {})
+        (back / 'moves.txt').write_text(f'{D}libssbu_switch_remote.nro -> {NRO}\n')
+        self.run_tool('preflight', str(back))
+        self.assertEqual(self.run_tool('install', str(back)), 0)
+        self.assertEqual((self.card / NRO).read_bytes(), b'our nro r1')
+
+    def test_bisect_swap_moves_then_writes_with_authorization(self):
+        P = 'atmosphere/contents/01006A800016E000/romfs/skyline/plugins/'
+        tr = P + 'libtraining_rooms.nro'
+        (self.card / tr).write_bytes(b'tr rc15')
+        rc14 = b'tr rc14'
+        j = self.job('b2', {tr: rc14})
+        (j / 'moves.txt').write_text(f'{tr} -> ultimate/switch-remote/disabled/libtraining_rooms.nro\n')
+        (j / 'authorized.json').write_text(json.dumps([{'dest': tr, 'sha256': oi.sha(rc14), 'bytes': len(rc14),
+                                                        'authorization': 'bisect (test)', 'source': 'test'}]))
+        (j / 'go.txt').write_text('ok (test)')
+        self.run_tool('preflight', str(j))
+        self.assertEqual(self.run_tool('install', str(j)), 0)
+        r = json.loads((j / 'install-receipt.json').read_text())
+        self.assertEqual([x['action'] for x in r['files']], ['moved', 'added'])
+        self.assertTrue(r['ok'])
+        self.assertEqual((self.card / tr).read_bytes(), b'tr rc14')
+        self.assertEqual((self.card / 'ultimate/switch-remote/disabled/libtraining_rooms.nro').read_bytes(), b'tr rc15')
+
+    def test_moves_are_restricted(self):
+        for line in ('atmosphere/config/system_settings.ini -> ultimate/switch-remote/disabled/system_settings.ini',
+                     f'{NRO} -> ultimate/switch-remote/disabled/other_name.nro',
+                     f'{NRO} -> ultimate/elsewhere/libssbu_switch_remote.nro'):
+            j = self.job(f'bad{abs(hash(line)) % 1000}', {})
+            (j / 'moves.txt').write_text(line + '\n')
+            with self.assertRaises(SystemExit) as cm:
+                self.run_tool('preflight', str(j))
+            self.assertIn('move not allowed', str(cm.exception))
+
     def test_missing_card_is_reported(self):
         with self.assertRaises(SystemExit) as cm:
             oi.transport(self.transport, str(self.tmp / 'nope') if self.transport == 'ums'

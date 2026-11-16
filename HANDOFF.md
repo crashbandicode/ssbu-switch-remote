@@ -143,6 +143,18 @@ Probable root cause: the listener was bound before DHCP. r4 (`9d8a027`, self-dia
   - End-to-end latency (UART press → first changed OBS frame): B 127–151 ms, Right 157–190 ms, Left 150–162 ms (`tools/host/pad_latency_regions.py`).
   - **A wired pad does NOT wake the sleeping console:** 10 HOME presses at 04:33Z did nothing; the operator woke it.
 
+## Smoke A HUNG (2026-11-16 05:16Z), stopped for the morning power-cycle
+
+- SSBU launch (guarded) → user select → **Nintendo launch splash forever** (stills to t+322 s, `smoke-ab/`). HOME is unresponsive, so no retry is possible. The console pings and polls the pad.
+- Since card-rc13 (11-14 08:11Z) only two plugins changed: **ours added** (r1 `1b5391a3`, never run) and **TR → rc.15** `de563644` (via rc.14 `6402e9a7`).
+- **Hypothesis:** our NRO's reporter thread uses nn::socket at plugin load, before the game initializes sockets (Eden can't show it).
+- **g1 (Deluxe 0.10.8) ON HOLD**: no go.txt.
+- **Morning, after the power cycle:**
+  1. Read-only FTP diagnosis.
+  2. `card-jobs/b1-disable-switch-remote-nro` (moves.txt: our NRO → `ultimate/switch-remote/disabled/`).
+  3. If it still hangs: `b2-tr-rc15-to-rc14` (rc.15 → disabled/, rc.14 written; authorized.json).
+  4. order.txt/go.txt are written at run time. `own_install.py` supports verified moves (42 tests).
+
 ## FTP-PLAN-r1 executed (2026-11-16 04:51–05:05Z)
 
 - **Console:** IP **172.30.254.79**, wired, LAN MAC **<device-mac-1>** (System Settings → Internet). .182 (<device-mac-3>) is NOT this console.

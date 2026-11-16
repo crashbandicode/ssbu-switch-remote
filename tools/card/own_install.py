@@ -119,6 +119,19 @@ class Ums:
         finally:
             os.close(dfd)
 
+    def move(self, src, dst):
+        d = self.path(dst)
+        d.parent.mkdir(parents=True, exist_ok=True)
+        if d.exists():
+            raise SystemExit(f'refused: move target exists: {dst}')
+        os.rename(self.path(src), d)
+        for parent in {self.path(src).parent, d.parent}:
+            dfd = os.open(parent, os.O_RDONLY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
+
     def remove(self, rel):
         p = self.path(rel)
         os.remove(p)
@@ -181,6 +194,16 @@ class Mtp:
                 if self.exists(rel):
                     self._gio('remove', self.uri(rel), check=True)
                 self._gio('copy', '-T', str(local), self.uri(rel), check=True)
+
+    def move(self, src, dst):
+        # gio move over MTP was unreliable (2026-10-13): copy, verify, then remove the source.
+        if self.exists(dst):
+            raise SystemExit(f'refused: move target exists: {dst}')
+        data = self.read(src)
+        self.write(dst, data)
+        if hashlib.sha256(self.read(dst)).hexdigest() != hashlib.sha256(data).hexdigest():
+            raise SystemExit(f'refused: {dst} did not read back; {src} left in place')
+        self.remove(src)
 
     def remove(self, rel):
         self._gio('remove', self.uri(rel), check=True)
@@ -307,6 +330,16 @@ class Ftp:
         finally:
             f.close()
 
+    def move(self, src, dst):
+        if self.exists(dst):
+            raise SystemExit(f'refused: move target exists: {dst}')
+        f = self._conn()
+        try:
+            self._mkdirs(f, dst.rsplit('/', 1)[0])
+            f.rename(self._abs(src), self._abs(dst))  # a rename on the card: nothing is copied or deleted
+        finally:
+            f.close()
+
     def remove(self, rel):
         f = self._conn()
         try:
@@ -374,6 +407,30 @@ def job_authorized(job):
     return out
 
 
+DISABLED = 'ultimate/switch-remote/disabled/'
+
+
+def job_moves(job):
+    """`moves.txt`: `<src> -> <dst>` per line. Only a plugin NRO into ultimate/switch-remote/disabled/ (same file name),
+    or back (rollback). Bisection of a boot hang (primary 2026-11-16 ~05:20Z): nothing is deleted."""
+    path = Path(job) / 'moves.txt'
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        src, _, dst = (x.strip() for x in line.partition('->'))
+        name = src.rsplit('/', 1)[-1]
+        ok = name.endswith('.nro') and dst.rsplit('/', 1)[-1] == name and (
+            (src == PLUGINS + name and dst == DISABLED + name) or (src == DISABLED + name and dst == PLUGINS + name))
+        if not ok:
+            raise SystemExit(f'refused: move not allowed: {line!r}')
+        out.append((src, dst))
+    return out
+
+
 def job_files(job):
     sd = Path(job) / 'sd'
     files = sorted(str(p.relative_to(sd)) for p in sd.rglob('*') if p.is_file()) if sd.exists() else []
@@ -386,8 +443,8 @@ def job_files(job):
     bad = [f for f in files if f not in ALLOWED and f not in auth]
     if bad:
         raise SystemExit(f'refused: not switch-remote files: {bad}')
-    if not files and not job_removals(job):
-        raise SystemExit('refused: no files under sd/ and no remove.txt')
+    if not files and not job_removals(job) and not job_moves(job):
+        raise SystemExit('refused: no files under sd/, no remove.txt and no moves.txt')
     return {f: (sd / f).read_bytes() for f in files}
 
 
@@ -415,17 +472,25 @@ def preflight(job, card, kind):
         raise SystemExit('refused: order.txt (the order this install follows) is missing or empty')
     new = job_files(job)
     removals = job_removals(job)
-    watched = sorted(set(sum((card.listdir(d) for d in WATCH_DIRS), [])) | set(new) | set(removals))
+    moves = job_moves(job)
+    move_paths = {p for m in moves for p in m}
+    watched = sorted(set(sum((card.listdir(d) for d in WATCH_DIRS), [])) | set(new) | set(removals) | move_paths)
     before = table(card, watched)
+    for src, dst in moves:
+        if not before.get(src):
+            raise SystemExit(f'refused: move source absent: {src}')
+        if before.get(dst):
+            raise SystemExit(f'refused: move target exists: {dst}')
     keep = Path(job) / 'before'
     for rel, h in before.items():
-        if (rel in new or rel in removals) and h:
+        if (rel in new or rel in removals or rel in move_paths) and h:
             (keep / rel).parent.mkdir(parents=True, exist_ok=True)
             (keep / rel).write_bytes(card.read(rel))
     receipt = {'phase': 'preflight', 'time': now(), 'transport': kind, 'order': order,
                'files': {rel: {'new_sha256': show(rel, sha(data)), 'bytes': len(data),
                                'card_sha256_before': show(rel, before[rel])} for rel, data in new.items()},
                'removals': {rel: show(rel, before[rel]) for rel in removals},
+               'moves': [{'src': src, 'dst': dst, 'sha256': before[src]} for src, dst in moves],
                'watched_before': {rel: show(rel, h) for rel, h in before.items()},
                '_before_raw': before}
     write_receipt(job, 'preflight-receipt.json', receipt)
@@ -448,9 +513,21 @@ def install(job, card, kind):
     if drift:
         raise SystemExit(f'refused: the card changed since preflight: {sorted(drift)}')
     rows, failed = [], None
-    for rel, data in new.items():
+    moves = job_moves(job)
+    for src, dst in moves:
+        row = {'dest': dst, 'src': src, 'before': before.get(src), 'new': None, 'bytes': None, 'action': 'moved'}
+        card.move(src, dst)
+        got = sha(card.read(dst))
+        gone = not card.exists(src)
+        row.update(after=got, readback_ok=(got == before.get(src) and gone), src_absent=gone)
+        rows.append(row)
+        if not row['readback_ok']:
+            failed = f'move {src} -> {dst}: readback {got[:16]}, source absent {gone}'
+            break
+    for rel, data in (new.items() if failed is None else []):
         row = {'dest': rel, 'before': show(rel, before.get(rel)), 'new': show(rel, sha(data)), 'bytes': len(data)}
-        old = card.read(rel) if before.get(rel) else None
+        # a name freed by a move in this job (e.g. a plugin swap) is absent now: nothing to back up there
+        old = card.read(rel) if before.get(rel) and rel not in {m[0] for m in moves} else None
         if old is not None and sha(old) == sha(data):
             row.update(after=row['new'], action='unchanged', readback_ok=True)
             rows.append(row)
@@ -500,7 +577,8 @@ def install(job, card, kind):
                 break
             continue
         rows.append(row)
-    others = [rel for rel in before if rel not in new and rel not in removals]
+    moved = {p for m in moves for p in m}
+    others = [rel for rel in before if rel not in new and rel not in removals and rel not in moved]
     after_others = table(card, others)
     changed = sorted(rel for rel in others if after_others[rel] != before[rel])
     receipt = {'phase': 'install', 'time': now(), 'transport': kind, 'order': pre['order'], 'files': rows,
