@@ -12,7 +12,10 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 - **~20:20Z HARDWARE TESTING STOPPED (the operator).** Console idle in Training (SSBU running); pad reset + stale claim
   released via `switch_hw.py down artifacts/switch-hw-feature-ledger/run-1`; OBS idle.
-  - **~20:35Z the reship = the integrated DIAG (logging) NRO of rc15/hw-reship** (the operator: "wait for the btt fixes
+  - **~20:45Z CHANGED: the reship = the RELEASE NRO of rc15/hw-reship** (the operator: "forget the log build just do a
+    normal one"); the job `card-jobs/r1-tr-hwreship-diag/` order/README updated (the dir name is historical). The
+    Skyline-loader identity request is cancelled (the doc stays at artifacts/rc15-hw-reship/CARD-SKYLINE-LOADER.md).
+  - (superseded) **~20:35Z the reship = the integrated DIAG (logging) NRO of rc15/hw-reship** (the operator: "wait for the btt fixes
     then ship it, do a bounded logging build of it"). Job STAGED: `card-jobs/r1-tr-hwreship-diag/` (order.txt,
     README.txt with exact steps, rollback/ = 80bb1203 verified). NO console until the primary's GO with the exact sha256.
     After: relaunch, a first-boot Skyline log (start the capture BEFORE the launch), TR install line = the DIAG build id,
