@@ -18,7 +18,7 @@
 namespace swpad {
 
 constexpr std::string_view kName = "switch-pad";
-constexpr std::string_view kVersion = "0.1.0";
+constexpr std::string_view kVersion = "0.1.1";
 constexpr std::string_view kUsbIdentity = "hori-0f0d:0092";
 constexpr uint64_t kFreq = 1000000;          // timestamps are microseconds
 constexpr uint64_t kWatchdogUs = 1000000;    // 1 s of host silence -> neutral
@@ -57,6 +57,7 @@ private:
     void watchdog(uint64_t now);
     void reset_live();
     bool system_button(std::string_view line, uint64_t now, sr::LineBuf<192>& out);
+    bool v0(std::string_view line, uint64_t now, sr::LineBuf<192>& out);  // press/stick/clear (human verbs)
 
     sr::Macro macro_;
     uint64_t button_deadline_[kBits] = {};

@@ -2,7 +2,7 @@
 """Flash the switch-pad firmware onto the ESP32-S3 board through its UART port, with a receipt (DESIGN.md 13).
 
   flash_pad.py --build <tools/build_pad.ps1 output dir> --out <receipt dir> [--port auto|/dev/...]
-               [--esptool /home/user/ssbu-switch-remote-work/venv-esptool/bin/esptool.py]
+               [--esptool /home/user/venvs/esptool/bin/esptool.py]
 
 1. Every image's sha256 must match the build's build.json.
 2. The port: `auto` = the one CH343 (VID 1a86) under /dev/serial/by-id; anything else is refused.
@@ -27,7 +27,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-DEFAULT_ESPTOOL = '/home/user/ssbu-switch-remote-work/venv-esptool/bin/esptool.py'
+DEFAULT_ESPTOOL = '/home/user/venvs/esptool/bin/esptool.py'
 CH343_GLOB = '/dev/serial/by-id/*1a86*'
 BAUD = 460800
 
@@ -76,7 +76,7 @@ def main(argv=None):
     ap.add_argument('--out', required=True)
     ap.add_argument('--port', default='auto')
     ap.add_argument('--esptool', default=DEFAULT_ESPTOOL)
-    ap.add_argument('--expect-version', default='0.1.0')
+    ap.add_argument('--expect-version', default='0.1.1')
     ap.add_argument('--boot-wait', type=float, default=2.0)
     a = ap.parse_args(argv)
     out = Path(a.out)

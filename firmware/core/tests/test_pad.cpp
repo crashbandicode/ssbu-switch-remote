@@ -68,7 +68,7 @@ static void sticks_scale_and_y_points_down() {
 static void leases_and_protocol() {
     Pad p;
     CHECK(say(p, "AUTH anything", 0) == "OK auth switch-pad");
-    CHECK(say(p, "VERSION", 0) == "OK version switch-pad 0.1.0 usb=hori-0f0d:0092");
+    CHECK(say(p, "VERSION", 0) == "OK version switch-pad 0.1.1 usb=hori-0f0d:0092");
     CHECK(say(p, "PING", 5 * MS) == "OK pong 5");
     CHECK(say(p, "BTN 0 press 100", 10 * MS) == "OK");
     CHECK(p.report(50 * MS).b[0] == 0x04);
@@ -91,7 +91,7 @@ static void leases_and_protocol() {
     CHECK(say(p, "NONSENSE", 970 * MS).rfind("ERR", 0) == 0);
     CHECK(say(p, "", 970 * MS).empty());
     std::string st = say(p, "STATUS", 980 * MS);
-    CHECK(st.rfind("OK status fw=switch-pad/0.1.0 usb=hori-0f0d:0092 usb_mounted=0 uptime_ms=980", 0) == 0);
+    CHECK(st.rfind("OK status fw=switch-pad/0.1.1 usb=hori-0f0d:0092 usb_mounted=0 uptime_ms=980", 0) == 0);
     CHECK(st.find("macro=idle") != std::string::npos);
     CHECK(say(p, "BYE", 990 * MS) == "OK bye");
 }
@@ -149,7 +149,38 @@ static void macro_refusals_and_watchdog_stop() {
     CHECK(p.watchdog_trips() == 1);
 }
 
+static void v0_verbs() {
+    Pad p;
+    CHECK(say(p, "press a 100", 0) == "OK");
+    CHECK(p.report(50 * MS).b[0] == 0x04 && p.report(101 * MS) == neutral_report());
+    CHECK(say(p, "press home 100", 200 * MS) == "OK" && p.report(250 * MS).b[1] == 0x10);
+    CHECK(say(p, "press capture 100", 400 * MS) == "OK" && p.report(450 * MS).b[1] == 0x20);
+    CHECK(say(p, "press a+b+up 200", 600 * MS) == "OK");
+    Report r = p.report(650 * MS);
+    CHECK(r.b[0] == 0x06 && r.b[2] == 0);
+    CHECK(say(p, "press dright+zl 100", 900 * MS) == "OK" && p.report(950 * MS).b[2] == 2);
+    CHECK(say(p, "clear", 960 * MS) == "OK" && p.report(961 * MS) == neutral_report());
+    CHECK(say(p, "stick 0.5 1 300", 1000 * MS) == "OK");
+    r = p.report(1100 * MS);
+    CHECK(r.b[3] == 192 && r.b[4] == 1);
+    CHECK(p.report(1301 * MS) == neutral_report());
+    CHECK(say(p, "stick -1 -1 100", 1400 * MS) == "OK" && p.report(1450 * MS).b[3] == 1);
+    CHECK(say(p, "status", 1500 * MS).rfind("OK status fw=switch-pad/0.1.1", 0) == 0);
+    CHECK(say(p, "press sl_left 100", 1500 * MS) == "ERR unknown_button sl_left");
+    CHECK(say(p, "press q 100", 1500 * MS) == "ERR unknown_button q");
+    CHECK(say(p, "press a", 1500 * MS).rfind("ERR bad_arguments", 0) == 0);
+    CHECK(say(p, "press a 0", 1500 * MS).rfind("ERR bad_arguments", 0) == 0);
+    CHECK(say(p, "press a 10001", 1500 * MS).rfind("ERR bad_arguments", 0) == 0);
+    CHECK(say(p, "stick 2 0 100", 1500 * MS).rfind("ERR bad_arguments", 0) == 0);
+    CHECK(say(p, "stick x 0 100", 1500 * MS).rfind("ERR bad_arguments", 0) == 0);
+    CHECK(say(p, "clear now", 1500 * MS).rfind("ERR bad_arguments", 0) == 0);
+    // The watchdog covers v0 input too.
+    CHECK(say(p, "press b 10000", 2000 * MS) == "OK");
+    CHECK(p.report(2900 * MS).b[0] == 0x02 && p.report(3001 * MS + 1) == neutral_report());
+}
+
 int main() {
+    v0_verbs();
     report_layout_matches_the_hori_descriptor();
     dpad_becomes_the_hat();
     sticks_scale_and_y_points_down();

@@ -74,7 +74,7 @@ class Flash(unittest.TestCase):
         self.assertTrue(r['ok'])
         self.assertEqual(r['chip_mac'], '3c:84:27:aa:bb:cc')
         self.assertEqual(len(r['verified']), 3)
-        self.assertTrue(r['version_reply'].startswith('OK version switch-pad 0.1.0'))
+        self.assertTrue(r['version_reply'].startswith('OK version switch-pad 0.1.1'))
         wf = calls[1]
         self.assertIn('write_flash', wf)
         tail = wf[wf.index('write_flash') + 1:]

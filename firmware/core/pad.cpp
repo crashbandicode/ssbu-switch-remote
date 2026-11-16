@@ -1,5 +1,6 @@
 #include "pad.hpp"
 
+#include <cstdlib>
 #include <cstring>
 
 namespace swpad {
@@ -61,6 +62,8 @@ Report make_report(uint32_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t
 
 Report neutral_report() { return make_report(0, 0, 0, 0, 0); }
 
+void reply_err(sr::LineBuf<192>& out, std::string_view code, std::string_view detail = {});
+
 void Pad::reset_live() {
     for (auto& d : button_deadline_) d = 0;
     stick_deadline_[0] = stick_deadline_[1] = 0;
@@ -97,13 +100,100 @@ Report Pad::report(uint64_t now) {
     return make_report(buttons, s[0][0], s[0][1], s[1][0], s[1][1]);
 }
 
-static void reply_err(sr::LineBuf<192>& out, std::string_view code, std::string_view detail = {}) {
+void reply_err(sr::LineBuf<192>& out, std::string_view code, std::string_view detail) {
     out.put("ERR ");
     out.put(code);
     if (!detail.empty()) {
         out.put(" ");
         out.put(detail);
     }
+}
+
+// --- v0 verbs (primary 2026-11-16 ~03:56Z: "press <buttons> <ms>, stick <x> <y> <ms>, clear, status") --------
+// Human-typable on a terminal; they drive the same leases and watchdog as BTN/STICK/RESET.
+//   press a+b 100       buttons by name, joined with '+': a b x y l r zl zr plus minus lstick rstick
+//                       up down left right home capture (HOME/CAPTURE included: the operator's first test)
+//   stick 0.5 -1 300    left stick, x y in -1..1 (+y = up)
+//   clear               everything neutral (also stops a macro)
+//   status              as STATUS
+static int name_bit(std::string_view n) {
+    if (n == "dup") n = "up";
+    if (n == "ddown") n = "down";
+    if (n == "dleft") n = "left";
+    if (n == "dright") n = "right";
+    if (n == "start") n = "plus";
+    if (n == "select") n = "minus";
+    int bit = sr::button_bit(n);
+    if (bit < 0 || (bit >= 16 && bit != kHome && bit != kCapture)) return -1;
+    return bit;
+}
+
+static bool parse_ms(std::string_view t, uint64_t& ms) {
+    return sr::parse_u64(t, ms) && ms >= 1 && ms <= sr::kLeaseMaxMs;
+}
+
+static bool parse_unit(std::string_view t, int32_t& out) {
+    char buf[24];
+    if (t.empty() || t.size() >= sizeof buf) return false;
+    std::memcpy(buf, t.data(), t.size());
+    buf[t.size()] = 0;
+    char* end = nullptr;
+    float v = std::strtof(buf, &end);
+    if (end != buf + t.size() || !(v >= -1.0f && v <= 1.0f)) return false;
+    out = int32_t(v * float(sr::kStickMax) + (v >= 0 ? 0.5f : -0.5f));
+    return true;
+}
+
+bool Pad::v0(std::string_view line, uint64_t now, sr::LineBuf<192>& out) {
+    std::string_view f[5];
+    size_t n = 0;
+    for (size_t i = 0; i < line.size() && n < 5;) {
+        size_t j = line.find(' ', i);
+        if (j == std::string_view::npos) j = line.size();
+        if (j > i) f[n++] = line.substr(i, j - i);
+        i = j + 1;
+    }
+    if (n == 0) return false;
+    if (f[0] == "status") return false;  // handled with STATUS below
+    if (f[0] == "clear") {
+        if (n != 1) return reply_err(out, "bad_arguments"), true;
+        reset_live();
+        if (macro_.phase == sr::MacroPhase::Playing) macro_.stop(nullptr);
+        out.put("OK");
+        return true;
+    }
+    if (f[0] == "press") {
+        uint64_t ms = 0;
+        if (n != 3 || !parse_ms(f[2], ms)) return reply_err(out, "bad_arguments", "press <a+b...> <ms 1-10000>"), true;
+        if (macro_.phase == sr::MacroPhase::Playing) return reply_err(out, "macro_busy"), true;
+        uint32_t bits = 0;
+        std::string_view names = f[1];
+        while (!names.empty()) {
+            size_t plus = names.find('+');
+            std::string_view one = names.substr(0, plus);
+            int bit = name_bit(one);
+            if (bit < 0) return reply_err(out, "unknown_button", one), true;
+            bits |= 1u << bit;
+            names = plus == std::string_view::npos ? std::string_view{} : names.substr(plus + 1);
+        }
+        for (int i = 0; i < kBits; i++)
+            if (bits >> i & 1) button_deadline_[i] = now + ms * 1000;
+        out.put("OK");
+        return true;
+    }
+    if (f[0] == "stick") {
+        int32_t x = 0, y = 0;
+        uint64_t ms = 0;
+        if (n != 4 || !parse_unit(f[1], x) || !parse_unit(f[2], y) || !parse_ms(f[3], ms))
+            return reply_err(out, "bad_arguments", "stick <x -1..1> <y -1..1> <ms 1-10000>"), true;
+        if (macro_.phase == sr::MacroPhase::Playing) return reply_err(out, "macro_busy"), true;
+        stick_[0][0] = x;
+        stick_[0][1] = y;
+        stick_deadline_[0] = now + ms * 1000;
+        out.put("OK");
+        return true;
+    }
+    return false;
 }
 
 // `BTN 18|19 press|release|tap <ms>`: HOME and CAPTURE, which sr::parse_request refuses (it guards the
@@ -152,6 +242,8 @@ void Pad::handle(std::string_view line, uint64_t now, sr::LineBuf<192>& out) {
         out.put(kUsbIdentity);
         return;
     }
+    if (v0(line, now, out)) return;
+    if (line == "status") line = "STATUS";
     if (system_button(line, now, out)) return;
     sr::Request r;
     if (const char* e = sr::parse_request(line, r)) {
