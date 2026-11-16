@@ -148,6 +148,16 @@ Probable root cause: the listener was bound before DHCP. r4 (`9d8a027`, self-dia
 - SSBU launch (guarded) → user select → **Nintendo launch splash forever** (stills to t+322 s, `smoke-ab/`). HOME is unresponsive, so no retry is possible. The console pings and polls the pad.
 - Since card-rc13 (11-14 08:11Z) only two plugins changed: **ours added** (r1 `1b5391a3`, never run) and **TR → rc.15** `de563644` (via rc.14 `6402e9a7`).
 - **Hypothesis:** our NRO's reporter thread uses nn::socket at plugin load, before the game initializes sockets (Eden can't show it).
+- **R1 LOAD-PATH AUDIT (2026-11-16 ~05:45Z): no definite hang** in `e2e802a:src/runtime.rs`.
+  - Skyline (both `972cdefc` 2023 and `2eb226fa` 2026) initializes sockets before any plugin `main`, so the socket-before-init hypothesis is refuted.
+  - Plugin mains run on Skyline's task thread (prio 20, core 3) while the game's main thread waits in `WaitEvent`; r1's main is bounded.
+  - r1's thread (prio 20, below the game main's 16) sleeps 1 s per failed connect.
+  - Defect, not a proven cause: `runtime.rs:268-271` reconnects without sleeping after a send failure.
+- **Morning FTP additions:**
+  - `/ultimate/switch-remote/events.log` (did r1's main finish?);
+  - TR events.log rc.15 line;
+  - `atmosphere/contents/01006A800016E000/exefs/` listing + subsdk9 sha (the Skyline build);
+  - SD root for skyline logs.
 - **g1 (Deluxe 0.10.8) ON HOLD**: no go.txt.
 - **Morning, after the power cycle:**
   1. Read-only FTP diagnosis.
