@@ -10,6 +10,12 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **~13:00Z PILOT TRIAGE (in progress; no console while the pilot runs):**
+  - **F04** = PLAN: Eden's CPU-Olimar row did a Training reset before looking (`final-35268287/runtime-remaining1/rows/article_hurt.py:140-148`, `reset-center`, then 6 native Pikmin); the pilot swapped the CPU without a reset. Fix: `press l+r+a 300` after the swap. Confirm on hardware in the next run.
+  - **F07** = PLAN: Make combo makes an input drill only when the macro has inputs and lands no hit (TR `src/model/rr_host.rs:1515-1520`); otherwise EMPTY_COMBO "No combo yet". Macro 1 had swallowed inputs.
+  - **F08** = PLAN: record the drill facing away from the CPU.
+  - **Launch 1 "Unable to start software"** (12:14:50Z A; error by 12:16:03Z): 15 min after the last Close (11:59:54Z), 5 s after a B undim; launch 2 8 s after a Close booted fine, so "too soon after Close" isn't supported. Still to do: once the pilot is DONE, exit to HOME → DBI FTP read of the newest `atmosphere/erpt_reports` (583 at 11:5xZ) → error code → post `PILOT TRIAGE` → hand the console to harness-lib (session ssbu-mod-playbook-6e) for its 10-min proof.
+  - Integration delegated to an Opus worker (dedupe, SESSION.md, rows.json + recipe_macro + dry-run, selector history tests, RUNBOOK.md). All 6 lanes done: CPU 97/57 exec, DC 93/58, FS 86/48, REC 79/53, SAV 51/37, X 51/16.
 - **12:3x-12:45Z operator corrections:** ONE session (not 45-60 min splits); NO redundant tests: every catalog row has
   `- **Covered by:** self | <ID> | pilot F0x`, and only `self` HW rows execute; the rows must run in the playbook
   RUNNER format (`ssbu-mod-playbook/tools/eden-runner/runner.py` rows.json) as one unattended invocation.
