@@ -62,6 +62,10 @@ The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive 
 The sysmodule was not listening (console at HOME, IP 172.30.254.53). Static review: `docs/SMOKE-01-REVIEW.md`. r4 (sysmodule 0.2.0, `9d8a027`, exefs.nsp 155,057 B, sha256 `e0365531ac293f626d96ece2540a37e3a7157d9826a507080b6587af3b6a7393`) is built and self-diagnosing. It is NOT installed; its job is `/home/user/ssbu-switch-remote-work/card-jobs/r4-sysmodule-9d8a027`. Resume:
 `tools/host/resume_smoke.ps1 -Phase card` (UMS or DBI: old logs read-only, then the r4 install), the operator reboots, then `-Phase smoke`.
 
+## Option (d), awaiting ruling (posted 2026-11-16 ~03:0xZ)
+
+Use sys-autopilot 1.5.0 (release zip sha256 a409ee7d…, exefs b132156a…, id 4200000000004150; no license file, internal tool) as the console driver; retire our sysmodule (remove its boot2.flag with receipts); keep our NRO as the scene reporter (new `scene_host` option → host receiver); move the online gate, launch/dismiss/terminate sequences and the update allowlist host-side. Re-ruling needed for the launch gate (host-side still check instead of ns records). Card install request contents are in the INBOX post. Evidence: /home/user/ref/sys-autopilot (6ca6aac), /home/user/ref/sys-autopilot-1.5.0.
+
 ## Hardware smoke plan (in order)
 
 1. Discovery finds the console; `smoke.py preflight` (status, capture, records, crash listing).
