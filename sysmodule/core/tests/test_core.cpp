@@ -356,6 +356,28 @@ static void lifecycle_rules() {
     CHECK(is_stage_file("exefs.nsp.sr-stage") && !is_stage_file("exefs.nsp") && !is_stage_file(".sr-stage"));
 }
 
+static void self_diagnosis_helpers() {
+    CHECK(retry_delay_ms(0) == 0 && retry_delay_ms(1) == 1000 && retry_delay_ms(3) == 5000 && retry_delay_ms(4) == 10000 &&
+          retry_delay_ms(1000) == 10000);
+    CHECK(log_attempt(1) && log_attempt(5) && !log_attempt(7) && log_attempt(12));
+    BootStatus s;
+    char line[256];
+    format_status(s, line, sizeof line);
+    CHECK(std::string(line) == "version=0.2.0 stage=start ip=none listening=0 port=0 uptime_ms=0 socket_attempts=0 "
+                               "nifm_attempts=0 config=missing last_error=none");
+    s.stage = "serving";
+    s.ip = 0xac1efe35;
+    s.listening = true;
+    s.port = 47130;
+    s.uptime_ms = 61000;
+    s.socket_attempts = 1;
+    s.nifm_attempts = 3;
+    s.config_ok = true;
+    format_status(s, line, sizeof line);
+    CHECK(std::string(line) == "version=0.2.0 stage=serving ip=172.30.254.53 listening=1 port=47130 uptime_ms=61000 "
+                               "socket_attempts=1 nifm_attempts=3 config=ok last_error=none");
+}
+
 static void line_buffer() {
     LineBuf<16> b;
     b.put("OK ");
@@ -384,6 +406,7 @@ int main() {
     sha256_known_vectors();
     update_allowlist_is_own_files_only();
     lifecycle_rules();
+    self_diagnosis_helpers();
     line_buffer();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

@@ -388,6 +388,14 @@ class AgainstLoopback(unittest.TestCase):
         self.c.request('switch.restart', {'wait_s': 10})  # a fresh start sweeps
         self.assertFalse(stage.exists())
 
+    def test_status_file_readable_without_the_lan(self):
+        time.sleep(0.8)
+        line = (self.lb.root / 'ultimate' / 'switch-remote' / 'status.txt').read_text()
+        self.assertRegex(line, r'^version=0\.2\.0 stage=serving ip=127\.0\.0\.1 listening=1 port=\d+ uptime_ms=\d+ ')
+        r = self.c.request('switch.file', {'root': 'ultimate', 'path': 'switch-remote/status.txt'})
+        self.assertTrue(r['ok'], r)
+        self.assertIn(b'stage=serving', r['result']['data'])
+
     def test_dropped_connection_reports_not_running(self):
         self.assertTrue(self.c.request('ping')['ok'])
         self.lb.proc.kill()

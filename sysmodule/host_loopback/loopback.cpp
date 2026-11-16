@@ -288,6 +288,29 @@ int main(int argc, char** argv) {
         if (scene.fd >= 0) si = n, p[n++] = {scene.fd, POLLIN, 0};
         int ready = poll(p, nfds_t(n), 100);
         g_service->refresh_app();
+        {
+            // status.txt, as the console writes it (core format_status).
+            static uint64_t last = 0;
+            if (mono_ns() - last > 500000000ull) {
+                BootStatus st;
+                st.stage = "serving";
+                st.listening = true;
+                st.port = cfg.port;
+                st.uptime_ms = mono_ns() / 1000000;
+                st.config_ok = true;
+                st.ip = 0x7f000001;
+                char line[256];
+                format_status(st, line, sizeof line);
+                std::string dir = g_root + "/ultimate/switch-remote";
+                mkdir((g_root + "/ultimate").c_str(), 0777);
+                mkdir(dir.c_str(), 0777);
+                if (FILE* sf = std::fopen((dir + "/status.txt").c_str(), "w")) {
+                    std::fprintf(sf, "%s\n", line);
+                    std::fclose(sf);
+                }
+                last = mono_ns();
+            }
+        }
         if (ready <= 0) continue;
         if (p[0].revents & POLLIN) accept_into(host_l, host, false, cfg);
         if (p[1].revents & POLLIN) accept_into(scene_l, scene, true, cfg);

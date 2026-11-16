@@ -121,7 +121,9 @@ bool Service::status(Sink& out) {
     LineBuf<384> b;
     {
         Guard g(p_);
-        b.put("OK status version=0.1.0 app=");
+        b.put("OK status version=");
+        b.put(kSysmoduleVersion);
+        b.put(" app=");
         b.put(app_pid_ ? "running" : "none");
         b.put(" pid=");
         b.put_u64(app_pid_);

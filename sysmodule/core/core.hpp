@@ -239,6 +239,28 @@ constexpr uint64_t kIdleDetachMs = 60000;
 bool detach_due(bool attached, bool active_now, uint64_t now_ms, uint64_t last_active_ms);
 // A staging file left by an interrupted PUT (swept at start).
 bool is_stage_file(std::string_view name);
+
+// ---------------------------------------------------------------------------------------------
+// Self-diagnosis (smoke 2026-11-16 01:31Z: the console was up but nothing listened on 47130, and nothing could be
+// read). A breadcrumb goes to sysmodule.log before any service that can fail; every init stage logs; network and
+// socket init retry with a bounded backoff instead of giving up; ultimate/switch-remote/status.txt shows the stage
+// even when the LAN is down.
+// ---------------------------------------------------------------------------------------------
+constexpr std::string_view kSysmoduleVersion = "0.2.0";
+uint64_t retry_delay_ms(unsigned attempt);  // 1 s, 2 s, 5 s, then 10 s
+bool log_attempt(unsigned attempt);         // attempts 1-5, then every 6th
+struct BootStatus {
+    const char* stage = "start";
+    uint32_t ip = 0;  // host order; 0 = none yet
+    bool listening = false;
+    uint16_t port = 0;
+    uint64_t uptime_ms = 0;
+    unsigned socket_attempts = 0, nifm_attempts = 0;
+    bool config_ok = false;
+    const char* last_error = "none";
+};
+// One line: "stage=... ip=a.b.c.d|none listening=0|1 port=N uptime_ms=N socket_attempts=N nifm_attempts=N config=ok|missing last_error=..."
+void format_status(const BootStatus& s, char* out, size_t cap);
 bool path_ok(std::string_view p, bool allow_empty);
 bool parse_u64(std::string_view s, uint64_t& v);
 bool parse_i32(std::string_view s, int32_t& v);

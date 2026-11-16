@@ -69,6 +69,38 @@ void write_log(const char* line) {
     fclose(f);
 }
 
+constexpr const char* kStatus = "sdmc:/ultimate/switch-remote/status.txt";
+sr::BootStatus g_boot;
+
+u64 uptime_ms() { return armTicksToNs(armGetSystemTick()) / 1000000; }
+
+// status.txt: one line, rewritten at every stage and every 10 s while serving (readable over UMS/DBI or FILE
+// even when the LAN never came up).
+void write_status() {
+    if (!g_sd) return;
+    g_boot.uptime_ms = uptime_ms();
+    char line[256];
+    sr::format_status(g_boot, line, sizeof line);
+    FILE* f = fopen(kStatus, "w");
+    if (!f) return;
+    fprintf(f, "%s\n", line);
+    fclose(f);
+}
+
+void stage(const char* name) {
+    g_boot.stage = name;
+    char line[96];
+    snprintf(line, sizeof line, "stage %s", name);
+    write_log(line);
+    write_status();
+}
+
+void fail(const char* what, Result rc) {
+    static char err[64];
+    snprintf(err, sizeof err, "%s_rc_0x%x", what, rc);
+    g_boot.last_error = err;
+}
+
 class NxPlatform final : public Platform {
 public:
     NxPlatform() { mutexInit(&mutex_); }
@@ -354,12 +386,26 @@ sr::Action serve() {
         if (host_l < 0) host_l = listen_on(INADDR_ANY, g_cfg.port);
         if (scene_l < 0) scene_l = listen_on(INADDR_LOOPBACK, u16(g_cfg.port + 1));
         if (host_l < 0 || scene_l < 0) {
-            char line[96];
-            snprintf(line, sizeof line, "listen failed host=%d scene=%d errno=%d; retrying in 5 s", host_l, scene_l,
-                     errno);
-            g_platform->log(line);
-            svcSleepThread(5'000'000'000ull);
+            static unsigned attempts = 0;
+            attempts++;
+            static char err[48];
+            snprintf(err, sizeof err, "listen_errno_%d", errno);
+            g_boot.last_error = err;
+            g_boot.listening = false;
+            if (sr::log_attempt(attempts)) {
+                char line[112];
+                snprintf(line, sizeof line, "listen failed host=%d scene=%d errno=%d (attempt %u); retrying", host_l,
+                         scene_l, errno, attempts);
+                g_platform->log(line);
+                write_status();
+            }
+            svcSleepThread(sr::retry_delay_ms(attempts) * 1'000'000ull);
             continue;
+        }
+        if (!g_boot.listening) {
+            g_boot.listening = true;
+            g_boot.stage = "serving";
+            write_status();
         }
         pollfd p[4];
         int n = 0, hi = -1, si = -1;
@@ -374,6 +420,13 @@ sr::Action serve() {
             p[n++] = {scene.fd, POLLIN, 0};
         }
         int ready = poll(p, nfds_t(n), 250);
+        static u64 last_status = 0;
+        if (uptime_ms() - last_status >= 10000) {
+            u32 ip = 0;
+            if (R_SUCCEEDED(nifmGetCurrentIpAddress(&ip)) && ip) g_boot.ip = ntohl(ip);
+            write_status();
+            last_status = uptime_ms();
+        }
         if (armTicksToNs(armGetSystemTick() - last_app_poll) > 500'000'000ull) {
             g_service->refresh_app();
             last_app_poll = armGetSystemTick();
@@ -412,45 +465,101 @@ bool load_config() {
     return true;
 }
 
-bool init_services() {
-    if (R_FAILED(smInitialize())) return false;  // nothing to log to yet
-    if (R_SUCCEEDED(fsInitialize()) && R_SUCCEEDED(fsdevMountSdmc())) g_sd = true;
-    write_log("switch-remote sysmodule 0.1.0 starting");
+// The SD first: until it is mounted nothing can be logged, so it is retried rather than given up on.
+void open_sd() {
+    for (unsigned attempt = 1;; attempt++) {
+        if (R_SUCCEEDED(smInitialize())) {
+            if (R_SUCCEEDED(fsInitialize()) && R_SUCCEEDED(fsdevMountSdmc())) {
+                g_sd = true;
+                return;
+            }
+            fsExit();
+            smExit();
+        }
+        svcSleepThread(sr::retry_delay_ms(attempt) * 1'000'000ull);
+    }
+}
+
+void init_services() {
     if (R_SUCCEEDED(setsysInitialize())) {
         SetSysFirmwareVersion fw;
-        if (R_SUCCEEDED(setsysGetFirmwareVersion(&fw))) hosversionSet(MAKEHOSVERSION(fw.major, fw.minor, fw.micro));
-        setsysExit();
-    }
-    struct {
-        const char* name;
-        Result rc;
-    } svc[] = {{"hid:dbg", hiddbgInitialize()},
-               {"pm:dmnt", pmdmntInitialize()},
-               {"pm:info", pminfoInitialize()},
-               {"ns:dev", nsdevInitialize()},
-               {"ns:am2", nsInitialize()},
-               {"pm:shell", pmshellInitialize()},
-               {"pgl", pglInitialize()}};
-    for (auto& s : svc) {
-        if (R_FAILED(s.rc)) {
-            char line[96];
-            snprintf(line, sizeof line, "service %s failed rc=0x%x", s.name, s.rc);
+        if (R_SUCCEEDED(setsysGetFirmwareVersion(&fw))) {
+            hosversionSet(MAKEHOSVERSION(fw.major, fw.minor, fw.micro));
+            char line[64];
+            snprintf(line, sizeof line, "firmware %u.%u.%u", fw.major, fw.minor, fw.micro);
             write_log(line);
         }
+        setsysExit();
     }
-    // A small socket configuration (ldn_mitm's is about 128 KiB of transfer memory; studied only).
+    // One line before and after each call: a call that never returns leaves its "init" line last in the log.
+    struct {
+        const char* name;
+        Result (*init)();
+    } svc[] = {{"hid:dbg", hiddbgInitialize}, {"pm:dmnt", pmdmntInitialize}, {"pm:info", pminfoInitialize},
+               {"ns:dev", nsdevInitialize},   {"ns:am2", nsInitialize},       {"pm:shell", pmshellInitialize},
+               {"pgl", pglInitialize}};
+    for (auto& v : svc) {
+        char line[96];
+        snprintf(line, sizeof line, "init %s ...", v.name);
+        write_log(line);
+        Result rc = v.init();
+        snprintf(line, sizeof line, "init %s rc=0x%x", v.name, rc);
+        write_log(line);
+        if (R_FAILED(rc)) fail(v.name, rc);
+    }
+}
+
+// Waits (bounded) for the console to get an IP, so the log and status.txt say whether the LAN is up. Serving
+// starts either way: binding 0.0.0.0 does not need an address yet.
+void wait_for_network() {
+    Result rc = nifmInitialize(NifmServiceType_User);
+    char line[96];
+    snprintf(line, sizeof line, "init nifm:u rc=0x%x", rc);
+    write_log(line);
+    if (R_FAILED(rc)) {
+        fail("nifm", rc);
+        return;
+    }
+    const u64 until = uptime_ms() + 120000;
+    for (unsigned attempt = 1; uptime_ms() < until; attempt++) {
+        g_boot.nifm_attempts = attempt;
+        u32 ip = 0;
+        if (R_SUCCEEDED(nifmGetCurrentIpAddress(&ip)) && ip) {
+            g_boot.ip = ntohl(ip);
+            snprintf(line, sizeof line, "network up after %u attempt(s)", attempt);
+            write_log(line);
+            write_status();
+            return;
+        }
+        if (sr::log_attempt(attempt)) write_status();
+        svcSleepThread(sr::retry_delay_ms(attempt) * 1'000'000ull);
+    }
+    write_log("no IP after 120 s; serving anyway (status.txt keeps updating)");
+}
+
+// Socket init, retried with a backoff instead of giving up once.
+void init_sockets() {
+    // ldn_mitm's UDP sizes (0x2000 each; studied only): a known-good bsd:u configuration. r1-r3 sent 0 here.
     static const SocketInitConfig sock = {
         .tcp_tx_buf_size = 0x4000, .tcp_rx_buf_size = 0x2000, .tcp_tx_buf_max_size = 0x10000,
-        .tcp_rx_buf_max_size = 0x4000, .udp_tx_buf_size = 0, .udp_rx_buf_size = 0,
+        .tcp_rx_buf_max_size = 0x4000, .udp_tx_buf_size = 0x2000, .udp_rx_buf_size = 0x2000,
         .sb_efficiency = 2, .num_bsd_sessions = 2, .bsd_service_type = BsdServiceType_User};
-    Result rc = socketInitialize(&sock);
-    if (R_FAILED(rc)) {
-        char line[96];
-        snprintf(line, sizeof line, "socket init failed rc=0x%x", rc);
-        write_log(line);
-        return false;
+    for (unsigned attempt = 1;; attempt++) {
+        g_boot.socket_attempts = attempt;
+        Result rc = socketInitialize(&sock);
+        if (R_SUCCEEDED(rc)) {
+            write_log("init sockets ok");
+            return;
+        }
+        fail("socket", rc);
+        if (sr::log_attempt(attempt)) {
+            char line[96];
+            snprintf(line, sizeof line, "init sockets rc=0x%x (attempt %u); retrying", rc, attempt);
+            write_log(line);
+            write_status();
+        }
+        svcSleepThread(sr::retry_delay_ms(attempt) * 1'000'000ull);
     }
-    return true;
 }
 
 Thread g_pad;
@@ -458,25 +567,45 @@ Thread g_pad;
 }  // namespace
 
 int main(int, char**) {
-    // At boot, wait before touching services; a runtime start (ovlSysmodules, RESTART) does not
-    // (core boot_delay_needed).
-    if (sr::boot_delay_needed(armTicksToNs(armGetSystemTick()) / 1000000)) svcSleepThread(kBootDelayNs);
-    if (!init_services()) {
-        write_log("init failed; idling");
-        while (true) svcSleepThread(60'000'000'000ull);
+    open_sd();
+    {
+        char line[128];
+        snprintf(line, sizeof line, "boot breadcrumb: switch-remote %.*s uptime_ms=%llu boot_window=%d",
+                 int(sr::kSysmoduleVersion.size()), sr::kSysmoduleVersion.data(), (unsigned long long)uptime_ms(),
+                 int(sr::boot_delay_needed(uptime_ms())));
+        write_log(line);
     }
+    stage("sd");
+    // At boot, wait before touching more services; a runtime start (ovlSysmodules, RESTART) does not
+    // (core boot_delay_needed).
+    if (sr::boot_delay_needed(uptime_ms())) {
+        stage("boot_delay");
+        svcSleepThread(kBootDelayNs);
+    }
+    stage("services");
+    init_services();
+    stage("network");
+    wait_for_network();
+    stage("sockets");
+    init_sockets();
+    stage("config");
     bool said = false;
     while (!load_config()) {
         if (!said) write_log("disabled: no valid config.txt (checked every 10 s)");
         said = true;
+        g_boot.config_ok = false;
+        write_status();
         svcSleepThread(10'000'000'000ull);
     }
+    g_boot.config_ok = true;
+    g_boot.port = g_cfg.port;
+    stage("listen");
     static NxPlatform platform;
     static sr::Service service(platform, g_cfg);
     g_platform = &platform;
     g_service = &service;
     service.sweep_stage();  // a hard kill (ovlSysmodules) can interrupt a PUT
-    if (R_SUCCEEDED(threadCreate(&g_pad, pad_thread, nullptr, nullptr, 0x4000, 0x2c, -2))) threadStart(&g_pad);
+    if (R_SUCCEEDED(threadCreate(&g_pad, pad_thread, nullptr, nullptr, 0x8000, 0x2c, -2))) threadStart(&g_pad);
     else write_log("pad thread failed");
     char line[96];
     snprintf(line, sizeof line, "serving port=%u scene_port=%u inject=%d", g_cfg.port, g_cfg.port + 1, int(g_cfg.inject));
@@ -500,6 +629,7 @@ int main(int, char**) {
     } else {
         write_log("shutdown: exiting");
     }
+    stage(action == sr::Action::Restart ? "restarting" : "shutdown");
     socketExit();
     return 0;
 }

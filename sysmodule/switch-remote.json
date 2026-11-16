@@ -3,7 +3,7 @@
     "title_id": "0x4200000000005352",
     "title_id_range_min": "0x4200000000005352",
     "title_id_range_max": "0x4200000000005352",
-    "main_thread_stack_size": "0x4000",
+    "main_thread_stack_size": "0x10000",
     "main_thread_priority": 49,
     "default_cpu_id": 3,
     "process_category": 0,
@@ -14,7 +14,7 @@
     "filesystem_access": {
         "permissions": "0xffffffffffffffff"
     },
-    "service_access": ["fsp-srv", "set:sys", "hid:dbg", "bsd:u", "pm:dmnt", "pm:info", "ns:dev", "ns:am2", "pgl", "pm:shell"],
+    "service_access": ["fsp-srv", "set:sys", "hid:dbg", "bsd:u", "pm:dmnt", "pm:info", "ns:dev", "ns:am2", "pgl", "pm:shell", "nifm:u"],
     "service_host": [],
     "kernel_capabilities": [
         {

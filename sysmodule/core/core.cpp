@@ -210,6 +210,26 @@ bool is_stage_file(std::string_view name) {
     return name.size() > suffix.size() && name.substr(name.size() - suffix.size()) == suffix;
 }
 
+uint64_t retry_delay_ms(unsigned attempt) {
+    static constexpr uint64_t steps[] = {1000, 2000, 5000};
+    return attempt == 0 ? 0 : attempt <= 3 ? steps[attempt - 1] : 10000;
+}
+
+bool log_attempt(unsigned attempt) { return attempt <= 5 || attempt % 6 == 0; }
+
+void format_status(const BootStatus& s, char* out, size_t cap) {
+    char ip[16] = "none";
+    if (s.ip)
+        snprintf(ip, sizeof ip, "%u.%u.%u.%u", unsigned(s.ip >> 24), unsigned((s.ip >> 16) & 255),
+                 unsigned((s.ip >> 8) & 255), unsigned(s.ip & 255));
+    snprintf(out, cap,
+             "version=%.*s stage=%s ip=%s listening=%d port=%u uptime_ms=%llu socket_attempts=%u nifm_attempts=%u "
+             "config=%s last_error=%s",
+             int(kSysmoduleVersion.size()), kSysmoduleVersion.data(), s.stage, ip, int(s.listening), unsigned(s.port),
+             (unsigned long long)s.uptime_ms, s.socket_attempts, s.nifm_attempts, s.config_ok ? "ok" : "missing",
+             s.last_error);
+}
+
 const char* system_sequence_allowed(bool application_running, bool sequence_busy) {
     if (application_running) return "application_running";
     if (sequence_busy) return "sequence_busy";
