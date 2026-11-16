@@ -10,6 +10,12 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **17:34Z CORE READY (INBOX 40979); WAITING FOR THE PRIMARY'S "SWITCH RELEASED" (the operator retrying P1 cycling by hand).**
+  Launch = a fresh session-lane worker running, via pwsh:
+  1. `/usr/bin/python3 -I /tmp/pb-clip/tools/eden-runner/switch_hw.py up /home/user/smash-training-lobby/artifacts/switch-hw-session-2` (refuses without a live Skyline line in 30 s);
+  2. `/usr/bin/python3 -I /tmp/pb-clip/tools/eden-runner/runner.py run /home/user/smash-training-lobby/artifacts/switch-hw-runbook/relaunch/rows.json --instances …/switch-hw-session-2/instances.json --out …/switch-hw-session-2/out` (background);
+  3. always `switch_hw.py down`.
+  Post the start + first 15 + `P1-SWAP-EVIDENCE.md` clip paths + progress ~30 min + FAILING.md. Facts: Reset page = SAVED defaults (never use it for clean-state); Player Swapping defaults Off (rows set it On). Possible product finding: SC-01 4/6 cycles changed the CPU.
 - **~17:30Z STRICT-CHECKS RELAUNCH PREP (SWITCH RELEASED by the primary; the console is on the Training CSS).**
   - **Why:** the BTT leak (FS-65/68 left it ON) contaminated PF-05..REC-21; only 12/212 rows had checked effect gates.
   - **New rules:** the clean-state gate + recovery, mode-off endings, the async gateway **Grok 4.6 high judge**
