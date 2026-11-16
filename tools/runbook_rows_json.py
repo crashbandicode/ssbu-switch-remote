@@ -82,7 +82,14 @@ def build_row(row_id, token_lists, name, covers):
                 i += 1
             else:
                 parts = t.split()
-                if parts[0] == 'press' and len(parts) == 3:
+                if parts[0] == 'press' and len(parts) == 3 and set(parts[1].split('+')) & {'home', 'capture'}:
+                    # HOME/Capture can't be in a pad macro (firmware ERR system_button): a backend call instead
+                    # (harness-lib switch_hw: switch.launch / switch.terminate / system-button call)
+                    flush()
+                    steps.append({'call': 'switch.button', 'params': {'button': parts[1], 'ms': int(parts[2])},
+                                  'todo': 'harness-lib: map to the hardware backend system-button call'})
+                    checked = False
+                elif parts[0] == 'press' and len(parts) == 3:
                     recipe.append({'buttons': parts[1], 'hold': int(parts[2]), 'gap': 0})
                 elif parts[0] == 'stick' and len(parts) == 4:
                     recipe.append({'stick': [float(parts[1]), float(parts[2]), int(parts[3])], 'gap': 0})
