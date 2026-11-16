@@ -391,7 +391,7 @@ class AgainstLoopback(unittest.TestCase):
     def test_status_file_readable_without_the_lan(self):
         time.sleep(0.8)
         line = (self.lb.root / 'ultimate' / 'switch-remote' / 'status.txt').read_text()
-        self.assertRegex(line, r'^version=0\.2\.0 stage=serving ip=127\.0\.0\.1 listening=1 port=\d+ uptime_ms=\d+ ')
+        self.assertRegex(line, r'^version=0\.3\.0 stage=serving ip=127\.0\.0\.1 listening=1 port=\d+ uptime_ms=\d+ ')
         r = self.c.request('switch.file', {'root': 'ultimate', 'path': 'switch-remote/status.txt'})
         self.assertTrue(r['ok'], r)
         self.assertIn(b'stage=serving', r['result']['data'])

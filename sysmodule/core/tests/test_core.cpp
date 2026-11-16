@@ -363,7 +363,7 @@ static void self_diagnosis_helpers() {
     BootStatus s;
     char line[256];
     format_status(s, line, sizeof line);
-    CHECK(std::string(line) == "version=0.2.0 stage=start ip=none listening=0 port=0 uptime_ms=0 socket_attempts=0 "
+    CHECK(std::string(line) == "version=0.3.0 stage=start ip=none listening=0 port=0 uptime_ms=0 socket_attempts=0 "
                                "nifm_attempts=0 config=missing last_error=none");
     s.stage = "serving";
     s.ip = 0xac1efe35;
@@ -374,8 +374,20 @@ static void self_diagnosis_helpers() {
     s.nifm_attempts = 3;
     s.config_ok = true;
     format_status(s, line, sizeof line);
-    CHECK(std::string(line) == "version=0.2.0 stage=serving ip=172.30.254.53 listening=1 port=47130 uptime_ms=61000 "
+    CHECK(std::string(line) == "version=0.3.0 stage=serving ip=172.30.254.53 listening=1 port=47130 uptime_ms=61000 "
                                "socket_attempts=1 nifm_attempts=3 config=ok last_error=none");
+}
+
+static void ip_watch_rebuilds_on_any_change() {
+    IpWatch w;
+    CHECK(!w.changed(0));            // first sample: no address yet (bound before DHCP)
+    CHECK(!w.changed(0));
+    CHECK(w.changed(0xac1efe35));    // none -> IP: rebuild
+    CHECK(!w.changed(0xac1efe35));
+    CHECK(w.changed(0xac1efec2));    // DHCP gave another address
+    CHECK(w.changed(0));             // teardown (cable, sleep)
+    IpWatch w2;
+    CHECK(!w2.changed(0xac1efe35));  // first sample with an address: base only
 }
 
 static void line_buffer() {
@@ -407,6 +419,7 @@ int main() {
     update_allowlist_is_own_files_only();
     lifecycle_rules();
     self_diagnosis_helpers();
+    ip_watch_rebuilds_on_any_change();
     line_buffer();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

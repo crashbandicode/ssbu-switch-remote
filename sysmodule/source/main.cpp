@@ -32,7 +32,7 @@ extern "C" {
 u32 __nx_applet_type = AppletType_None;
 u32 __nx_fs_num_sessions = 1;
 
-#define INNER_HEAP_SIZE 0x100000
+#define INNER_HEAP_SIZE 0x200000  // 2 MiB: socket transfer memory (~296 KiB) + stdio + headroom
 size_t nx_inner_heap_size = INNER_HEAP_SIZE;
 char nx_inner_heap[INNER_HEAP_SIZE];
 
@@ -57,9 +57,12 @@ constexpr long kLogMax = 256 * 1024;
 constexpr u64 kBootDelayNs = 10'000'000'000ull;
 
 bool g_sd = false;
+// Between PSC's sleep request and the wake notification no fsp-srv or bsd IPC may happen (r5; sys-autopilot
+// server.c:187-219 explains the console crash otherwise). The log and status writers stay silent then.
+volatile bool g_quiet = false;
 
 void write_log(const char* line) {
-    if (!g_sd) return;
+    if (!g_sd || g_quiet) return;
     mkdir("sdmc:/ultimate", 0777);
     mkdir(kDir, 0777);
     struct stat st;
@@ -77,7 +80,7 @@ u64 uptime_ms() { return armTicksToNs(armGetSystemTick()) / 1000000; }
 // status.txt: one line, rewritten at every stage and every 10 s while serving (readable over UMS/DBI or FILE
 // even when the LAN never came up).
 void write_status() {
-    if (!g_sd) return;
+    if (!g_sd || g_quiet) return;
     g_boot.uptime_ms = uptime_ms();
     char line[256];
     sr::format_status(g_boot, line, sizeof line);
@@ -103,7 +106,10 @@ void fail(const char* what, Result rc) {
 
 class NxPlatform final : public Platform {
 public:
-    NxPlatform() { mutexInit(&mutex_); }
+    NxPlatform() {
+        mutexInit(&mutex_);
+        mutexInit(&hdls_mutex_);
+    }
     uint64_t now() override { return armGetSystemTick(); }
     uint64_t freq() override { return armGetSystemTickFreq(); }
     void lock() override { mutexLock(&mutex_); }
@@ -168,7 +174,36 @@ public:
         }
         return true;
     }
+    // The pad thread attaches and sends; the network thread detaches and releases on sleep (r5): one lock.
     bool hdls_attach() override {
+        mutexLock(&hdls_mutex_);
+        bool ok = attach_locked();
+        mutexUnlock(&hdls_mutex_);
+        return ok;
+    }
+    void hdls_detach() override {
+        mutexLock(&hdls_mutex_);
+        detach_locked();
+        mutexUnlock(&hdls_mutex_);
+    }
+    void hdls_send(const sr::PadState& p) override {
+        mutexLock(&hdls_mutex_);
+        send_locked(p);
+        mutexUnlock(&hdls_mutex_);
+    }
+    // Sleep: detach and release the work buffer (hid transfer memory held across a sleep crashes it).
+    void hdls_release() {
+        mutexLock(&hdls_mutex_);
+        detach_locked();
+        if (work_ready_) {
+            hiddbgReleaseHdlsWorkBuffer(session_);
+            work_ready_ = false;
+        }
+        mutexUnlock(&hdls_mutex_);
+    }
+
+private:
+    bool attach_locked() {
         if (attached_) return true;
         if (!work_ready_) {
             Result rc = hiddbgAttachHdlsWorkBuffer(&session_, work_, sizeof work_);
@@ -187,13 +222,13 @@ public:
         log("hdls attached");
         return true;
     }
-    void hdls_detach() override {
+    void detach_locked() {
         if (!attached_) return;
         hiddbgDetachHdlsVirtualDevice(handle_);
         attached_ = false;
         log("hdls detached");
     }
-    void hdls_send(const sr::PadState& p) override {
+    void send_locked(const sr::PadState& p) {
         if (!attached_) return;
         HiddbgHdlsState s = {};
         s.battery_level = 4;
@@ -207,6 +242,8 @@ public:
         s.analog_stick_r.y = p.ry;
         hiddbgSetHdlsState(handle_, &s);
     }
+
+public:
     bool list(const char* path, void (*entry)(void*, const Entry&), void* ctx) override {
         char full[300];
         snprintf(full, sizeof full, "sdmc:%s", path);
@@ -246,7 +283,7 @@ private:
         log(line);
         return false;
     }
-    Mutex mutex_, log_mutex_ = {};
+    Mutex mutex_, log_mutex_ = {}, hdls_mutex_ = {};
     bool work_ready_ = false, attached_ = false;
     HiddbgHdlsSessionId session_ = {};
     HiddbgHdlsHandle handle_ = {};
@@ -256,6 +293,7 @@ private:
 NxPlatform* g_platform;
 sr::Service* g_service;
 volatile bool g_pad_stop = false;
+volatile bool g_asleep = false;
 Config g_cfg;
 
 void pad_thread(void*) {  // ends when g_pad_stop is set (RESTART/SHUTDOWN)
@@ -264,6 +302,10 @@ void pad_thread(void*) {  // ends when g_pad_stop is set (RESTART/SHUTDOWN)
     bool attached = false;
     while (!g_pad_stop) {
         svcSleepThread(1'000'000);
+        if (g_asleep) {  // r5: nothing touches hid between the sleep request and the wake
+            attached = false;
+            continue;
+        }
         u64 now = armGetSystemTick();
         sr::PadState want;
         bool need = g_service->pad_step(now, want);
@@ -377,12 +419,101 @@ bool pump(Conn& c) {
     return c.len < kLineMax || g_service->put_pending();
 }
 
+// --- r5: sleep/wake (PSC) and network changes. Re-implemented after sys-autopilot (TooTallNate),
+// source/common/power.c and server.c:187-251 (studied only; no code copied; docs/PROVENANCE.md). ---
+PscPmModule g_psc;
+bool g_psc_ok = false;
+
+void init_power() {
+    Result rc = pscmInitialize();
+    if (R_SUCCEEDED(rc)) {
+        // Fs as a dependency: PSC tells us before the SD goes away.
+        static const u32 deps[] = {PscPmModuleId_Fs};
+        rc = pscmGetPmModule(&g_psc, PscPmModuleId(0x5352), deps, 1, true);
+        g_psc_ok = R_SUCCEEDED(rc);
+    }
+    char line[64];
+    snprintf(line, sizeof line, "init psc:m rc=0x%x", rc);
+    write_log(line);
+    if (R_FAILED(rc)) fail("psc", rc);
+}
+
+enum class Power : u8 { None, Sleep, Wake };
+
+Power power_poll(PscPmState& st) {
+    if (!g_psc_ok || R_FAILED(eventWait(&g_psc.event, 0))) return Power::None;
+    u32 flags = 0;
+    if (R_FAILED(pscPmModuleGetRequest(&g_psc, &st, &flags))) return Power::None;
+    switch (st) {
+        case PscPmState_ReadySleep:
+        case PscPmState_ReadySleepCritical:
+        case PscPmState_ReadyShutdown: return Power::Sleep;
+        default: return Power::Wake;
+    }
+}
+
+u32 current_ip() {
+    u32 ip = 0;
+    if (R_FAILED(nifmGetCurrentIpAddress(&ip))) return 0;
+    return ntohl(ip);
+}
+
 // RESTART / SHUTDOWN (and nothing else) end serve(): every socket is closed and the pad detached first.
 sr::Action serve() {
     int host_l = -1, scene_l = -1;
     Conn host, scene;
-    u64 last_app_poll = 0;
+    u64 last_app_poll = 0, last_ip_poll = 0;
+    sr::IpWatch ipw;
+    auto close_all = [&]() {
+        close_conn(host);
+        close_conn(scene);
+        if (host_l >= 0) close(host_l);
+        if (scene_l >= 0) close(scene_l);
+        host_l = scene_l = -1;
+        g_boot.listening = false;
+    };
     while (true) {
+        PscPmState st;
+        Power pw = power_poll(st);
+        if (pw == Power::Sleep) {
+            write_log("power: sleep requested; closing sockets, releasing the virtual controller");
+            g_quiet = true;  // no fsp/bsd IPC until the wake notification
+            g_asleep = true;
+            if (host.fd >= 0) g_service->on_disconnect(host.session);
+            close_all();
+            g_platform->hdls_release();
+            g_service->set_attached(false);
+            pscPmModuleAcknowledge(&g_psc, st);
+            continue;
+        }
+        if (pw == Power::Wake) {
+            pscPmModuleAcknowledge(&g_psc, st);
+            if (st == PscPmState_Awake) {
+                g_quiet = false;
+                g_asleep = false;
+                write_log("power: awake; reopening listeners");
+                ipw = sr::IpWatch{};
+            }
+            continue;
+        }
+        if (g_asleep) {
+            svcSleepThread(100'000'000ull);
+            continue;
+        }
+        if (uptime_ms() - last_ip_poll >= sr::kIpPollMs) {
+            last_ip_poll = uptime_ms();
+            u32 ip = current_ip();
+            g_boot.ip = ip;
+            if (ipw.changed(ip) && (host_l >= 0 || scene_l >= 0)) {
+                char line[96];
+                snprintf(line, sizeof line, "network: IP changed to %u.%u.%u.%u; rebuilding listeners", ip >> 24,
+                         (ip >> 16) & 255, (ip >> 8) & 255, ip & 255);
+                write_log(line);
+                if (host.fd >= 0) g_service->on_disconnect(host.session);
+                close_all();
+                write_status();
+            }
+        }
         if (host_l < 0) host_l = listen_on(INADDR_ANY, g_cfg.port);
         if (scene_l < 0) scene_l = listen_on(INADDR_LOOPBACK, u16(g_cfg.port + 1));
         if (host_l < 0 || scene_l < 0) {
@@ -419,11 +550,9 @@ sr::Action serve() {
             si = n;
             p[n++] = {scene.fd, POLLIN, 0};
         }
-        int ready = poll(p, nfds_t(n), 250);
+        int ready = poll(p, nfds_t(n), 100);  // PSC requests are checked every loop
         static u64 last_status = 0;
         if (uptime_ms() - last_status >= 10000) {
-            u32 ip = 0;
-            if (R_SUCCEEDED(nifmGetCurrentIpAddress(&ip)) && ip) g_boot.ip = ntohl(ip);
             write_status();
             last_status = uptime_ms();
         }
@@ -539,11 +668,12 @@ void wait_for_network() {
 
 // Socket init, retried with a backoff instead of giving up once.
 void init_sockets() {
-    // ldn_mitm's UDP sizes (0x2000 each; studied only): a known-good bsd:u configuration. r1-r3 sent 0 here.
+    // r5: Nintendo's default UDP sizes (0x2400/0xA500) and fixed TCP buffers, as sys-autopilot runs them on hardware
+    // (source/main.c kSocketConfig; studied only). Transfer memory: 2 x 0x25000 = 296 KiB. r1-r3 sent UDP 0/0.
     static const SocketInitConfig sock = {
-        .tcp_tx_buf_size = 0x4000, .tcp_rx_buf_size = 0x2000, .tcp_tx_buf_max_size = 0x10000,
-        .tcp_rx_buf_max_size = 0x4000, .udp_tx_buf_size = 0x2000, .udp_rx_buf_size = 0x2000,
-        .sb_efficiency = 2, .num_bsd_sessions = 2, .bsd_service_type = BsdServiceType_User};
+        .tcp_tx_buf_size = 0x8000, .tcp_rx_buf_size = 0x10000, .tcp_tx_buf_max_size = 0,
+        .tcp_rx_buf_max_size = 0, .udp_tx_buf_size = 0x2400, .udp_rx_buf_size = 0xA500,
+        .sb_efficiency = 2, .num_bsd_sessions = 4, .bsd_service_type = BsdServiceType_User};
     for (unsigned attempt = 1;; attempt++) {
         g_boot.socket_attempts = attempt;
         Result rc = socketInitialize(&sock);
@@ -584,6 +714,7 @@ int main(int, char**) {
     }
     stage("services");
     init_services();
+    init_power();
     stage("network");
     wait_for_network();
     stage("sockets");

@@ -246,7 +246,24 @@ bool is_stage_file(std::string_view name);
 // socket init retry with a bounded backoff instead of giving up; ultimate/switch-remote/status.txt shows the stage
 // even when the LAN is down.
 // ---------------------------------------------------------------------------------------------
-constexpr std::string_view kSysmoduleVersion = "0.2.0";
+constexpr std::string_view kSysmoduleVersion = "0.3.0";
+
+// Network changes (r5). A listener opened before DHCP, or across a network teardown, can silently stop accepting
+// while poll() reports nothing; the fix is to rebuild the listeners whenever the console's IP changes, none->IP
+// included. Technique re-implemented after sys-autopilot (TooTallNate), source/common/server.c:227-251
+// (studied only; docs/PROVENANCE.md).
+struct IpWatch {
+    bool have = false;
+    uint32_t last = 0;
+    // Records `ip` (0 = none); true when it differs from the previous sample (the first sample only sets the base).
+    bool changed(uint32_t ip) {
+        bool c = have && ip != last;
+        have = true;
+        last = ip;
+        return c;
+    }
+};
+constexpr uint64_t kIpPollMs = 2000;
 uint64_t retry_delay_ms(unsigned attempt);  // 1 s, 2 s, 5 s, then 10 s
 bool log_attempt(unsigned attempt);         // attempts 1-5, then every 6th
 struct BootStatus {
