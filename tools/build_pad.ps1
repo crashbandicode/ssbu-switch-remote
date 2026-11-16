@@ -12,7 +12,9 @@ param(
     [Parameter(Mandatory)][string]$Rev,
     [Parameter(Mandatory)][string]$Out,
     [string]$Repo = (Split-Path $PSScriptRoot -Parent),
-    [string]$BuildHost = 'device-2',
+    [string]$BuildHost = 'device-2',           # ssh target that builds
+    [ValidateSet('yoga', 'xps')][string]$LedgerHost = 'yoga',  # the host booked in the ledger (yoga | xps)
+    [string]$LedgerSsh = 'device-2',           # where the ledger lives
     [string]$Idf = '/home/user/build-hosts/toolchains/esp-idf-v5.5.6',
     [string]$IdfTools = '/home/user/build-hosts/toolchains/espressif',
     [string]$Lane = 'switch-remote-pad',
@@ -26,10 +28,10 @@ $tar = Join-Path ([IO.Path]::GetTempPath()) "sr-pad-$($full.Substring(0, 8)).tar
 git -C $Repo archive --format=tar -o $tar $full firmware sysmodule/core
 $deadline = (Get-Date).AddMinutes($WaitMinutes)
 while ($true) {
-    $claim = & ssh @ssh $BuildHost "/usr/bin/python3 -I ~/build-hosts/bin/ledger.py claim --host yoga --owner switch-remote --note 'switch-pad firmware $($full.Substring(0, 8))'" 2>&1
+    $claim = & ssh @ssh $LedgerSsh "/usr/bin/python3 -I ~/build-hosts/bin/ledger.py claim --host $LedgerHost --owner switch-remote --note 'switch-pad firmware $($full.Substring(0, 8))'" 2>&1
     if ($LASTEXITCODE -eq 0) { break }
     if ((Get-Date) -gt $deadline) { throw "ledger claim refused for $WaitMinutes min: $claim" }
-    "$(Get-Date -AsUTC -Format 'HH:mm:ssZ') yoga busy ($((@($claim) -join ' ').Trim().Substring(0, [Math]::Min(120, (@($claim) -join ' ').Trim().Length)))); waiting 60 s"
+    "$(Get-Date -AsUTC -Format 'HH:mm:ssZ') $LedgerHost busy ($((@($claim) -join ' ').Trim().Substring(0, [Math]::Min(120, (@($claim) -join ' ').Trim().Length)))); waiting 60 s"
     Start-Sleep -Seconds 60
 }
 $bid = (@($claim) | Where-Object { $_ -and $_.Trim() } | Select-Object -Last 1).Trim()
@@ -66,7 +68,7 @@ systemd-run --user --scope -q -p MemoryMax=4G /usr/bin/timeout 1800 nice -n 19 i
         images = $imgs; time = (Get-Date -AsUTC -Format o) } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $Out 'build.json')
     "ok: switch_pad.bin $($imgs['switch_pad.bin'].bytes) B sha256 $($imgs['switch_pad.bin'].sha256)"
 } finally {
-    & ssh @ssh $BuildHost "/usr/bin/python3 -I ~/build-hosts/bin/ledger.py release --host yoga --owner switch-remote --bid $bid --note 'switch-pad build done'" | Out-Null
+    & ssh @ssh $LedgerSsh "/usr/bin/python3 -I ~/build-hosts/bin/ledger.py release --host $LedgerHost --owner switch-remote --bid $bid --note 'switch-pad build done'" | Out-Null
     & ssh @ssh $BuildHost "Remove-Item -Recurse -Force ~/build-hosts/lanes/$Lane -ErrorAction SilentlyContinue"
     Remove-Item $tar -ErrorAction SilentlyContinue
 }
