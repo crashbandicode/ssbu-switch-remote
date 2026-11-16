@@ -511,6 +511,9 @@ def make_client(socket_string, **kw):
         if files and 'files' not in kw:
             kw['files'] = make_client(files)
         return usbpad.UsbClient(socket_string, **kw)
+    if socket_string.startswith('pi://'):
+        import usbpad  # the Raspberry Pi Zero 2 W gadget alternative (DESIGN.md 13a): same pad, TCP + token
+        return usbpad.PiClient(socket_string, **kw)
     for scheme in ('switch://', 'autopilot://'):
         if socket_string.startswith(scheme):
             break

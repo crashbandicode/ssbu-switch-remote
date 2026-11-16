@@ -16,7 +16,7 @@ Revisions:
   the fallback if sys-autopilot fails on fw 23.5.0 (§11). Sections 1, 3 and 3a describe that parked sysmodule.
 
 - **5** (primary direction ~03:50Z): INPUT moves to a USB wired controller on the operator's ESP32-S3 board (§13).
-  sys-autopilot becomes optional (logs/files).
+  sys-autopilot becomes optional (logs/files). §13a evaluates a Raspberry Pi Zero 2 W gadget as the second option.
 
 Revision 1's in-game input path is kept as the documented fallback (§8).
 
@@ -468,6 +468,48 @@ holds the firmware sha256s, the esptool output and the chip MAC.
 - The card session: REMOVE our sysmodule's `boot2.flag` and UPDATE the NRO and config. sys-autopilot becomes an
   OPTIONAL extra job, for remote log reads and file updates without UMS/DBI.
 - The host gate (`scened.py`) still guards the `autopilot://` route if that is ever used for input.
+
+## 13a. The second option: Raspberry Pi Zero 2 W in USB gadget mode (operator note ~03:53Z; evaluated)
+
+**Facts.**
+- **Ports.** A Zero has micro-USB ports; "one … is labelled PWR IN and is reserved for power input only, but you can
+  use any of those labelled USB" (raspberrypi/documentation `computers/getting-started/setting-up.adoc`). On the
+  Zero 2 W that leaves ONE data port.
+- **Gadget mode.** `dtoverlay=dwc2,dr_mode=peripheral` (raspberrypi/firmware `boot/overlays/README` @`896fc67d`),
+  plus configfs `libcomposite` with `usb_f_hid` → `/dev/hidg0`.
+- **ns2bench** (`a105ca7`, GPL, studied only) presents the same HORI identity this way. It lists the Zero 2 W as
+  "same daemon, gadget and FunctionFS code; **untested**" (`docs/REFERENCE.md`); only a Luckfox board is tested.
+  Its setup notes: "A board powered by the console's USB loses power when the console sleeps, and boots again when
+  it wakes."
+
+**Comparison.**
+
+| | ESP32-S3 (Freenove FNK0085), §13 | Pi Zero 2 W gadget |
+| --- | --- | --- |
+| Wiring to the console | OTG port → dock | the one data port → dock |
+| Command link to the PC | the board's second USB port (CH343 UART): **wired, no network** | Wi-Fi (a **network**, which the operator wanted to avoid), or GPIO14/15 UART through a 3.3 V USB-TTL adapter. Zero 2 W boards usually ship without headers, so that means soldering plus an adapter |
+| Timing | Macro frames on a µs device clock; the report refreshes every 1 ms. Deterministic, no OS | Linux userspace: SCHED_FIFO + `clock_nanosleep(TIMER_ABSTIME)` + `mlockall`. Typical wake-up latency is well under 1 ms; tail spikes of several ms under SD/Wi-Fi interrupts are possible on the stock non-RT kernel (unmeasured) |
+| What dominates either way | the console's own poll (~8 ms, ASSUMPTION §13) | the same, plus the tail spikes |
+| Console sleep (powered from the dock) | reboots in well under a second | reboots in tens of seconds, and a power cut on a written SD card risks corruption (mitigation: power it from PWR IN, or a read-only root) |
+| Build effort left | **built and host-tested** (`433f357`); remaining: the operator's serial-access fix, then flash and plug | microSD + Raspberry Pi OS Lite; overlay + configfs gadget script; Wi-Fi/SSH or UART soldering; the daemon cross-built for aarch64. The daemon is small, because the core is reused (below) |
+| Risk | Freenove publishes no schematic (VBUS isolation unverified); TinyUSB/descriptor acceptance unverified until plugged in | an untested board per ns2bench; a network link; SD and boot-time issues |
+
+**One API for both.**
+- The Pi daemon would be the TCP mode of `firmware/host_sim/padsim.cpp`, which is already built and tested: the
+  same `swpad::Pad` core and line protocol, the first line `AUTH <token>`, one client, the 1 s watchdog. It writes
+  each report to `/dev/hidg0` instead of the log.
+- `pi://HOST[:47140]` (`usbpad.PiClient`, tested against padsim's TCP mode: same API, token refused,
+  dropped-link→neutral) and `usb://TTY` share everything else, so the runner, macros and sequences are unchanged.
+- With a GPIO UART adapter instead of Wi-Fi, the Pi would simply be `usb://<adapter tty>`.
+
+**Recommendation: straight to the ESP32-S3; the Pi is the fallback.**
+- The ESP32 path is already built and tested. Its remaining steps (one sudo serial fix, two cables, `-Phase flash`)
+  are fewer than the Pi's (an SD image, gadget config, a network or soldering, an aarch64 daemon build). So the Pi
+  would not give us a working controller sooner.
+- The ESP32 path is the one the operator asked for: wired, no network, deterministic timing.
+- Build the Pi route only if the ESP32-S3 can't present the controller, e.g. the console rejects TinyUSB's
+  enumeration, or the board is the single-port "Lite" variant. Linux's dwc2 is an independent USB stack, which makes
+  it a meaningful second try. Its Wi-Fi link stays LAN-only, with the token.
 
 ## Requirement trace
 

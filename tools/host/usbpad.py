@@ -31,7 +31,7 @@ import tty
 from pathlib import Path
 
 from sequences import LAUNCH_QUIET_MS, HomeSequences
-from switch_remote import Connection, SwitchClient, SwitchError, parse_kv
+from switch_remote import Connection, SwitchClient, SwitchError, parse_kv, read_token
 
 BAUD = 921600
 KEEPALIVE_S = 0.3
@@ -117,6 +117,15 @@ class SerialConnection(Connection):
     def read_line(self):
         line = super().read_line()
         return line.rstrip('\r')
+
+
+PI_PORT = 47140
+
+
+def pi_address(spec):
+    hostport = spec[len('pi://'):].rstrip('/') if spec.startswith('pi://') else spec
+    host, _, port = hostport.rpartition(':') if ':' in hostport else (hostport, '', '')
+    return host or hostport, int(port) if port else PI_PORT
 
 
 class UsbClient(HomeSequences, SwitchClient):
@@ -252,3 +261,15 @@ class UsbClient(HomeSequences, SwitchClient):
         except SwitchError as e:
             out['capture'] = {'error': str(e)}
         return out
+
+
+class PiClient(UsbClient):
+    """The same pad over a network line link: a Raspberry Pi Zero 2 W in USB gadget mode (DESIGN.md 13a) running
+    the switch-pad core as a daemon (`pi://HOST[:47140]`). The link is a network, so it is token-authenticated
+    (the switch-remote token); everything else is UsbClient: device-timed macros, keep-alive, sequences."""
+
+    def __init__(self, spec, token=None, timeout=5.0, **kw):
+        host, port = pi_address(spec)
+        super().__init__(f'pi-{host}', timeout=timeout, **kw)
+        self.serial_device = f'pi://{host}:{port}'
+        self.conn = Connection(host, port, token or read_token(), timeout)

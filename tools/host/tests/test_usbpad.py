@@ -223,6 +223,64 @@ class SmokeAndRunner(Base):
         self.assertEqual(inst['switch']['socket'], 'usb:///dev/serial/by-id/x')
 
 
+@unittest.skipUnless(PADSIM.exists(), 'make -C firmware out/padsim')
+class PiLink(unittest.TestCase):
+    """pi:// (DESIGN.md 13a): the same core behind a token-guarded TCP line link, as the Pi daemon would run it."""
+    TOKEN = 'test-token-0123456789'
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix='sr-pi-'))
+        self.log = self.tmp / 'reports.jsonl'
+        self.sim = subprocess.Popen([str(PADSIM), '--tcp', '0', '--token', self.TOKEN, '--log', str(self.log)],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.port = int(self.sim.stdout.readline().split()[1])
+
+    def tearDown(self):
+        self.sim.stdin.close()
+        self.sim.wait(5)
+        self.sim.stdout.close()
+        shutil.rmtree(self.tmp)
+
+    def client(self, token=TOKEN):
+        return usbpad.PiClient(f'pi://127.0.0.1:{self.port}', token=token, capture_backend='capd',
+                               capd_socket='/nonexistent/capd.sock', scene=FakeScene({'gate': 'no_scene_receiver'}))
+
+    def reports(self):
+        return [json.loads(x)['r'] for x in self.log.read_text().splitlines()]
+
+    def test_same_api_over_the_network_link(self):
+        c = self.client()
+        try:
+            self.assertTrue(c.request('input.button', {'button': 'a', 'duration_ms': 100})['ok'])
+            self.assertEqual(c.request('switch.version')['result']['reply'][:30], 'OK version switch-pad 0.1.0 us')
+            time.sleep(0.2)
+            self.assertTrue(any(r[0] == 0x04 for r in self.reports()))
+            self.assertEqual(c.request('status')['result']['backend'], 'usb')
+        finally:
+            c.close()
+
+    def test_wrong_token_is_refused(self):
+        c = self.client(token='wrong-token-0123456789')
+        r = c.request('input.button', {'button': 'a'})
+        self.assertEqual(r['error']['code'], 'auth')
+        self.assertFalse(any(r[0] for r in self.reports()))
+
+    def test_a_dropped_link_goes_neutral(self):
+        c = self.client()
+        c.request('input.button', {'button': 'y', 'state': 'press', 'lease_ms': 5000})
+        c.stop_keepalive()
+        c.conn.close()
+        deadline = time.time() + 2
+        while time.time() < deadline and self.reports()[-1] != NEUTRAL:
+            time.sleep(0.02)
+        self.assertEqual(self.reports()[-1], NEUTRAL)
+
+    def test_make_client_pi_scheme(self):
+        c = sr.make_client('pi://172.30.254.105', token=self.TOKEN)
+        self.assertIsInstance(c, usbpad.PiClient)
+        self.assertEqual((c.conn.host, c.conn.port), ('172.30.254.105', 47140))
+
+
 class Files(Base):
     def test_logs_need_the_optional_sys_autopilot(self):
         self.assertEqual(self.c.request('switch.list', {'root': 'crash_reports'})['error']['code'], 'unsupported')

@@ -126,6 +126,10 @@ Probable root cause: the listener was bound before DHCP. r4 (`9d8a027`, self-dia
   - OPTIONAL `card-jobs/e2-optional-autopilot-1.5.0` (no order.txt).
   - d1 is superseded.
 
+## Pi Zero 2 W (operator note ~03:53Z): evaluated, DESIGN.md 13a
+
+Recommendation: straight to the ESP32-S3; the Pi is the fallback (only if the ESP32 can't present the pad). `pi://` (`usbpad.PiClient`) and padsim's TCP mode (the Pi daemon's shape) are built and tested; the Pi daemon, gadget script and SD image are NOT built.
+
 ## Option (d): staged, NOT installed (ruled 2026-11-16; INPUT superseded by the USB pad, see above)
 
 - **Card job** `card-jobs/d1-autopilot-1.5.0-nro-3d6e1bb` (one session; `order.txt` = the ruling). Dry run on a
