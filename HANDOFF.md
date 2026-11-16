@@ -10,6 +10,8 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **12:13Z PLAN READY posted (INBOX line 38729).** Per the operator, a Sonnet lane executes `PLAN.md` (12 in scope, 8 N/A;
+  tools section included); switch-remote-2 only answers stuck points. Console idle on HOME, SSBU selected.
 - **12:05Z NEW JOB: HARDWARE FEATURE LEDGER** (operator: "test that the features work on switch like we did with eden").
   Card as is (TR rc.15 `de563644` + Deluxe 0.10.8 `30cb25dd`). **No card writes; FTP log reads OK; no pushes.**
   - Out dir `/home/user/smash-training-lobby/artifacts/switch-hw-ledger-rc15/`: `PLAN.md` (a research worker is
