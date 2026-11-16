@@ -10,6 +10,13 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **13:11Z HW RUNBOOK READY posted (INBOX line 39177):** 467 catalog / 254 executed / 100 covered / 19 pilot / 33 PERF / 26
+  ONLINE / 15 2P / 20 NOT-TESTABLE. ONE session ~5.4 h. `$RB/rows.json` dry-run READY (1,901 segments). Selector tests 16/16;
+  commit `7a473a3`. Follow-up: 195 unmapped TR src files select everything, so they need mapping.
+  - **hw-run-2** (a worker holds the console; run dir `artifacts/switch-hw-run-2/`): unattended F04/F05/F07/F08 via the
+    runner. S-BOOT passed in 143 s. When it reports, post its verdicts and update `switch-hw-ledger-rc15/LEDGER.md`. Then the full
+    session: `switch_hw.py up <dir>` → `runner.py run $RB/rows.json --instances <dir>/instances.json --out <dir>/out` →
+    `switch_hw.py down <dir>` (always). harness-lib = session ssbu-mod-playbook-6e (backend at playbook f60448d).
 - **12:48Z PILOT TRIAGE + PILOT FIXES READY posted (INBOX line 39022).** The console was handed to harness-lib (ssbu-mod-playbook-6e) ~12:47Z for its proof; switch-remote-2 holds no console.
   - Fixes doc: `artifacts/switch-hw-ledger-rc15/PLAN-FIX-F04-F07-F08.md` (Eden-exact setups: F04 P1 Olimar via Player Character + reset; F07/F08 Eden `drill-move` taps → 4-step drill; no hit rule).
   - Launch-1 = erpt **2009-0005** (ldr InvalidNso) at 12:16:15Z; it's not timing. Proposed (needs an OK): a read-only SD read check when the card is next on UMS. 21 other new erpts are WAN noise. Decoder: `/tmp/sr2-erpt.py`.
