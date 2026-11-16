@@ -216,8 +216,9 @@ class ObsCapture:
         if method == 'recording.stop':
             out = self.client.request('StopRecord')
             started, self.recording_started = self.recording_started, None
+            finalized = self.wait_finalized(out.get('outputPath'))
             return {'path': out.get('outputPath'), 'frames': None, 'dropped_frames': None,
-                    'first_wall': started, 'approximate_start': True}
+                    'first_wall': started, 'approximate_start': True, 'finalized': finalized}
         if method == 'recording.status':
             return self.client.request('GetRecordStatus')
         if method == 'replay.save':
@@ -231,6 +232,22 @@ class ObsCapture:
                 time.sleep(0.1)
             return {'path': path, 'saved_wall': saved}
         raise KeyError(method)
+
+    def wait_finalized(self, path, cap=15.0, poll=0.2):
+        """StopRecord answers before OBS has finished the file (an MP4 writes its index last), so a clip read at
+        once can decode no frames at all (hw-run-2, 2026-11-16: every clip under ~3 s, "no frames decoded").
+        Wait until the record output is no longer active and the file's size holds for one poll. False at the cap
+        (the caller still tries the file)."""
+        until = time.monotonic() + cap
+        last = None
+        while time.monotonic() < until:
+            active = self.client.request('GetRecordStatus').get('outputActive')
+            size = Path(path).stat().st_size if path and Path(path).is_file() else None
+            if not active and size is not None and size == last:
+                return True
+            last = None if active else size
+            time.sleep(poll)
+        return False
 
 
 def pick_backend(device='/dev/video4', obs_factory=None):

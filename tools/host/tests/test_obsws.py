@@ -114,7 +114,16 @@ class FakeObs:
             elif t == 'GetSourceScreenshot':
                 data = {'imageData': 'data:image/png;base64,' + base64.b64encode(tiny_png()).decode()}
             elif t == 'StopRecord':
-                data = {'outputPath': '/home/x/obs/2026-11-15 22-00-00.mkv'}
+                if self.replay_dir:  # like OBS: the answer comes first, the output stays active a little longer
+                    path = self.replay_dir / '2026-11-15 22-00-00.mp4'
+                    path.write_bytes(b'mp4')
+                    self.active_after_stop = 2
+                    data = {'outputPath': str(path)}
+                else:
+                    data = {'outputPath': '/home/x/obs/2026-11-15 22-00-00.mkv'}
+            elif t == 'GetRecordStatus' and getattr(self, 'active_after_stop', 0):
+                self.active_after_stop -= 1
+                data = {'outputActive': True}
             elif t == 'GetLastReplayBufferReplay':
                 data = {'savedReplayPath': str(self.replay_dir / 'Replay.mkv') if self.replay_dir else None}
             elif t in ('StartRecord', 'SaveReplayBuffer', 'GetRecordStatus'):
@@ -167,8 +176,12 @@ class Obs(unittest.TestCase):
         cap = obsws.ObsCapture(self.client())
         self.assertTrue(cap.handle('recording.start', {})['accepted'])
         stop = cap.handle('recording.stop', {})
-        self.assertTrue(stop['path'].endswith('.mkv'))
+        self.assertTrue(stop['path'].endswith('.mp4'))
         self.assertTrue(stop['approximate_start'])
+        # it waited for the output to stop (two active polls) and the file size to hold before answering
+        self.assertTrue(stop['finalized'])
+        self.assertGreaterEqual([c[0] for c in self.obs.calls].count('GetRecordStatus'), 4)
+        self.assertFalse(obsws.ObsCapture.wait_finalized(cap, str(self.tmp / 'missing.mp4'), cap=0.5))
         replay = cap.handle('replay.save', {})
         self.assertEqual(replay['path'], str(self.tmp / 'Replay.mkv'))
 
