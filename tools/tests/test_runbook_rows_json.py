@@ -66,6 +66,38 @@ class Vocabulary(unittest.TestCase):
             rj.Builder(gifs=False).body('FS-01', [['check:FS-02-on']])
         self.assertEqual(rj.first_input([['mark:FS-01-x', 'press a 100']]), 'press a 100')
 
+    def test_seek_p1_practice_off_home_tokens(self):
+        steps = rj.Builder(gifs=False).body('PF-08', [['seek:Recording|Combos & Sequences|+ Record drill…',
+                                                        'press a 100', 'practice-off', 'home', 'p1:Mario']])
+        self.assertEqual(steps[0], {'run': 'hooks/tr_seek.py:seek', 'check': True,
+                                    'args': {'page': 'Recording', 'section': 'Combos & Sequences',
+                                             'row': '+ Record drill…'}})
+        self.assertEqual([s.get('run') for s in steps[2:]], ['hooks/clean_state.py:practice_games_off', 'hooks/tr_page.py:home',
+                                                             'hooks/tr_seek.py:p1_is'])
+        self.assertEqual(rj.start_kind({}, [['seek:Recording|Options|Loop']]), 'training')
+        self.assertTrue(rj.turns_pages([['seek:Recording|Options|Loop']]))
+        with self.assertRaises(SystemExit):
+            rj.Builder(gifs=False).body('X', [['seek:Nowhere|a|b']])
+
+    def test_x_guard_set_and_p1_tokens(self):
+        # X on an open page saves the defaults: refused; X on the HUD before any menu is fine; audited rows pass
+        self.assertTrue(rj.x_guard('ZZ-01', [['press b+up 100', 'press down 100', 'press x 100']]))
+        self.assertTrue(rj.x_guard('ZZ-01', [['page:Saves'], ['press b 100', 'press x 100']]))  # maybe a page
+        self.assertEqual(rj.x_guard('ZZ-01', [['press x 100', 'press b+up 100', 'home', 'press x 100']]), [])
+        self.assertEqual(rj.x_guard('PF-06', [['press b+up 100', 'press x 100']]), [])  # X_ALLOWED: the editor
+        steps = rj.Builder(gifs=False).body('FS-01', [['set:Fighters & Stages|Player 1 and CPU|Player Swapping|On',
+                                                       'home', 'p1-mark', 'press zl+right 100', 'p1-changed']])
+        self.assertEqual(steps[0]['args'], {'page': 'Fighters & Stages', 'section': 'Player 1 and CPU',
+                                            'row': 'Player Swapping', 'value': 'On'})
+        self.assertEqual([s.get('run') for s in steps if 'run' in s],
+                         ['hooks/clean_state.py:set_row', 'hooks/tr_page.py:home', 'hooks/clean_state.py:p1_mark',
+                          'hooks/clean_state.py:p1_changed'])
+        with self.assertRaises(SystemExit):
+            rj.Builder(gifs=False).body('X', [['set:Saves|a|b|Maybe']])
+        table = rj.known_issue_table([{'id': 'FS-05', 'name': 'Player Character: grid pick'},
+                                      {'id': 'FS-66', 'name': 'placing'}, {'id': 'DC-01', 'name': 'HBV'}])
+        self.assertEqual((table['a']['rows'], table['b']['rows']), (['FS-05'], ['FS-66']))
+
     def test_labelled_shots_and_vocabulary_checks(self):
         steps = [{'run': 'hooks/clean_state.py:ensure_clean', 'check': True}, {'shot': 'R-before'}, {'play': 'R-s01'},
                  {'shot': 'R-mid'}, {'play': 'R-s02'}, {'shot': 'R-after'}]

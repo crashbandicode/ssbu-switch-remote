@@ -83,7 +83,10 @@ TRAINING_GATE = {'kind': 'hook', 'module': HOOK, 'function': 'image_gate', 'refe
 MENU_GATE = {'kind': 'hook', 'module': HOOK, 'function': 'menu_open_gate', 'cap': 10, 'interval': 0.25}
 # One continuous OBS recording per session (harness-lib runner, playbook a80d514): no per-command gif steps; clips and
 # stills are cut offline from <out>/recording.jsonl (tools/session_cut.py).
-SESSION_RECORDING = {'marks': ['row-start', 'row-end', 'shot'], 'chapters': True, 'log': 'recording.jsonl'}
+# per_row_files: one OBS file per row (playbook ebf4d8e): the row's clip is closed at the next row's start, and the
+# judge job of the row starts then (judge_queue.py)
+SESSION_RECORDING = {'marks': ['row-start', 'row-end', 'shot'], 'chapters': True, 'log': 'recording.jsonl',
+                     'per_row_files': True}
 LIVE_REFS = 'refs/live-refs.json'
 LIVE_CAP = 8
 FIXTURE_HOOK = 'hooks/tr_fixture.py'
@@ -111,10 +114,17 @@ COST = {'play': 0.15,        # macro.play upload + completion poll beyond the ma
         'run': 0.3,          # another checking hook
         'settle': 1.3,       # tr_fixture:settle with no fighter loading: home look + gate, two notice looks
         'require': 0.05,     # tr_fixture:require reads receipts
-        'clean': 1.2,        # clean_state:ensure_clean on a clean screen: home look + one classify still
+        'seek': 9.0,         # tr_seek:seek: goto (home, preload_clear, open, R) + ~6 verified presses, a still each
+        'p1_is': 1.0,        # tr_seek:p1_is: one or two HUD stills
+        'set_row': 11.0,     # clean_state:set_row: a seek + one or two Left presses, a still each
+        'p1_mark': 0.2,      # clean_state:p1_mark: one still
+        'p1_changed': 6.0,   # clean_state:p1_changed: stills until the new fighter's portrait (load ~5-10 s)
+        'practice_off': 24.0,  # tr_seek:practice_off: two seeks + value reads + home + two HUD looks
+        'clean': 1.6,        # clean_state:ensure_clean on a clean screen: two matching classify stills 0.5 s apart
         'mode_off': 14.0,    # clean_state:mode_off: classify, F&S Practice games reset (seek + A + confirm), re-check
         'notice_gate': 10.0}  # the fx-notice-clear gate after a fighter pick: Loading N/7 ... Ready, ~5-15 s measured
-ROUTE_COST = {'routes:switch_boot': 101.0, 'routes:switch_to_training': 39.0, 'routes:switch_close': 4.0}
+ROUTE_COST = {'routes:switch_boot': 101.0, 'routes:switch_to_training': 39.0, 'routes:switch_close': 4.0,
+              'hooks/start_route.py:from_anywhere': 45.0}  # CSS -> READY -> Plus -> Training HUD -> preload_clear
 MENU_OPEN = 'press b+up 100'
 TRAILING_MAX = 2.0
 
@@ -209,7 +219,10 @@ def model_seconds(row, segments):
             elif 'wait_ms' in s:
                 total += s['wait_ms'] / 1000
             elif 'run' in s:
-                if s['run'].endswith(':ensure_clean'):
+                if s['run'].endswith((':seek', ':p1_is', ':practice_off', ':set_row', ':p1_mark', ':p1_changed',
+                                      ':practice_games_off')):
+                    total += COST[s['run'].rsplit(':', 1)[1].replace('practice_games_off', 'practice_off')]
+                elif s['run'].endswith(':ensure_clean'):
                     total += COST['clean']
                 elif s['run'].endswith(':mode_off'):
                     total += COST['mode_off']
@@ -289,7 +302,8 @@ def first_input(tokens):
 def start_kind(fields, tokens):
     """'training' (Training HUD, menu closed), 'tr-menu' (menu open at page level) or 'chain' (another row's screen)."""
     first = first_input(tokens)
-    if first.startswith(('page:', 'route:')) or first in ('press b+up 100', 'press minus 100'):
+    if first.startswith(('page:', 'route:', 'seek:', 'set:', 'p1:')) or first in (
+            'press b+up 100', 'press minus 100', 'practice-off', 'home', 'p1-mark'):
         return 'training'
     text = fields.get('Start gate', '').lower()
     if re.search(r'menu open|title |recording page|open on', text) and 'menu closed' not in text:
@@ -306,7 +320,8 @@ def turns_pages(tokens):
     for toks in tokens:
         for t in toks:
             p = t.split()
-            if (p[:1] == ['press'] and len(p) == 3 and p[1] in ('l', 'r')) or t.startswith('route:'):
+            if (p[:1] == ['press'] and len(p) == 3 and p[1] in ('l', 'r')) or t.startswith(('route:', 'seek:', 'set:')) \
+                    or t == 'practice-off':
                 return True
     return False
 
@@ -537,6 +552,32 @@ class Builder:
             elif t.startswith('route:'):
                 close_gif()
                 out.append({'run': f'routes:{t[6:]}', 'check': True})
+            elif t.startswith('seek:'):  # a verified menu seek (hooks/tr_seek.py): Page|Section|Row, no blind counts
+                parts = t[5:].split('|')
+                if len(parts) != 3 or parts[0] not in PAGES:
+                    raise SystemExit(f'{row_id}: {t!r}: seek:<page>|<section>|<row>')
+                close_gif()
+                out.append({'run': f'{SEEK_HOOK}:seek', 'args': dict(zip(('page', 'section', 'row'), parts)),
+                            'check': True})
+            elif t.startswith('set:'):  # set:<page>|<section>|<row>|On|Off: verified seek + value read by image
+                parts = t[4:].split('|')
+                if len(parts) != 4 or parts[0] not in PAGES or parts[3] not in ('On', 'Off'):
+                    raise SystemExit(f'{row_id}: {t!r}: set:<page>|<section>|<row>|On|Off')
+                close_gif()
+                out.append({'run': f'{CLEAN_HOOK}:set_row', 'check': True,
+                            'args': dict(zip(('page', 'section', 'row', 'value'), parts))})
+            elif t in ('p1-mark', 'p1-changed'):  # P1's HUD portrait before / changed after a cycle or a pick
+                close_gif()
+                out.append({'run': f'{CLEAN_HOOK}:{t.replace("-", "_")}', 'check': True})
+            elif t.startswith('p1:'):  # the P1 HUD portrait is this fighter, else the row fails (tr_seek.p1_is)
+                close_gif()
+                out.append({'run': f'{SEEK_HOOK}:p1_is', 'args': {'fighter': t[3:]}, 'check': True})
+            elif t == 'practice-off':  # F&S > Practice games: Eggs-ercise and BTT SET Off, each read back by image
+                close_gif()
+                out.append({'run': f'{CLEAN_HOOK}:practice_games_off', 'check': True})
+            elif t == 'home':  # close any TR screen (keyboard-safe) and prove the Training HUD
+                close_gif()
+                out.append({'run': f'{HOOK}:home', 'check': True})
             else:
                 parts = t.split()
                 if parts[0] == 'press' and len(parts) == 3 and set(parts[1].split('+')) & SYSTEM:
@@ -626,6 +667,8 @@ def load_fixture_gates(rb):
 
 
 CLEAN_HOOK = 'hooks/clean_state.py'
+SEEK_HOOK = 'hooks/tr_seek.py'
+START_HOOK = 'hooks/start_route.py'
 # tr_seek.py's section jumps (the clean-state reset seeks F&S > Practice games > "Reset page to defaults")
 CLEAN_SEGMENTS = {'tr-zl-up': [{'buttons': 'zl+up', 'hold': 100, 'gap': 0.35}],
                   'tr-zl-down': [{'buttons': 'zl+down', 'hold': 100, 'gap': 0.35}]}
@@ -635,6 +678,87 @@ MODE_ON = {**{f'FS-{n}': ['btt'] for n in range(65, 71)}, **{f'FS-{n}': ['eggs']
            **{r: ['drill'] for r in ('PF-07', 'PF-08', 'SC-02', 'PF-09', 'REC-26', 'REC-38')},
            'FS-27': ['stage-builder'], 'SB-01': ['stage-builder'], 'CPU-94': ['hide-cpu']}
 MODES = ('btt', 'eggs', 'drill', 'stage-builder', 'hide-cpu')
+
+
+# Operator-found product issues (2026-11-16, a fix + reship is coming): a judged FAIL of a row in an issue's family is
+# status KNOWN-PRODUCT-ISSUE (not chased, not counted by the consecutive-failure stop). family: row name regex and
+# explicit ids; reason: the judge-reason regex that picks the issue among several of one family.
+KNOWN_ISSUES = {
+    'a': {'title': 'P1 character swapping does not apply',
+          'name': r'Player (Character|Swapping)|Cycle chord|P1 (Mario|Olimar)|^fixture FX-01',
+          'ids': ['T-01', 'T-05', 'T-09', 'PF-04', 'FS-01', 'FS-04', 'FS-05', 'FS-12'],
+          'reason': r'P1|player|swap|portrait|fighter'},
+    'b': {'title': 'Break the Targets: the camera stays zoomed out after X start',
+          'name': r'Break the Targets|Place targets', 'ids': [f'FS-{n}' for n in range(65, 71)],
+          'reason': r'zoom|camera'},
+    'c': {'title': 'Break the Targets: the timer/marker banner is too big',
+          'name': r'Break the Targets|Place targets', 'ids': [f'FS-{n}' for n in range(65, 71)],
+          'reason': r'banner|timer|marker|too (big|large)|size'},
+    'd': {'title': 'projectiles do not break targets',
+          'name': r'Break the Targets|Place targets|Eggs-ercise break', 'ids': [f'FS-{n}' for n in range(65, 71)],
+          'reason': r'projectile|fireball|break'},
+}
+EARLY = r'Player (Character|Swapping)|Cycle chord'  # P1-swap rows run right after the baseline (clips for the fix lane)
+EVIDENCE_FILE = 'P1-SWAP-EVIDENCE.md'
+
+
+MENU_OPENERS = ('press b+up 100', 'press minus 100')
+
+
+def menu_state_before(tokens, i):
+    """'open' / 'maybe-open' (a B since the menu opened: closed, or back to a page) / 'closed' before tokens[i]."""
+    state = 'closed'
+    for t in tokens[:i]:
+        p = t.split()
+        if t in MENU_OPENERS or t.startswith(('page:', 'seek:', 'set:')):
+            state = 'open'
+        elif t == 'home' or t.startswith(('route:', 'p1:')) or t in ('practice-off', 'p1-changed', 'p1-mark'):
+            state = 'closed'
+        elif p[:1] == ['press'] and len(p) == 3 and p[1] == 'b' and state != 'closed':
+            state = 'maybe-open'
+    return state
+
+
+# X on an open TR menu page SAVES the page's defaults ("Reset page to defaults" then restores THOSE, not the factory
+# ones: after FS-71's reset Break the Targets still read On, session-1 16:26:53Z). No row presses X with the menu
+# possibly open unless it is listed here, with the screen its X acts on.
+X_ALLOWED = {
+    'CPU-43': 'Training HUD: X is a jump (the menu was closed by B, then L+R+A)',
+    'CPU-44': 'Training HUD: X is a jump (menu closed)',
+    'FS-59': 'Training HUD: X is a jump (menu closed)',
+    'REC-03': 'Training HUD: X is a jump while recording (menu closed)',
+    'FS-07': 'Character Cycles grid: X shows the next form (Pokemon Trainer)',
+    'FS-30': 'Lobby Stages list (opened by A on a seek-verified row): X switches the mode to Direct',
+    'FS-66': 'Break the Targets placing view: X starts the run / X with no target',
+    'FS-67': 'Break the Targets placing view: X starts the run',
+    'PF-06': 'clip Crop editor: X previews on the CPU',
+    'PF-09': 'drill Crop editor: X (no preview for a drill)',
+    'PF-11': 'clip Crop editor: X previews',
+    'SAV-19': 'save-state list (A opened it): X opens the rename keyboard',
+}
+
+
+def x_guard(rid, token_lists):
+    """Errors for X presses while the TR menu may be open (X_ALLOWED rows excepted)."""
+    flat = [t for line in token_lists for t in line]
+    errors = []
+    for i, t in enumerate(flat):
+        p = t.split()
+        if p[:1] == ['press'] and len(p) == 3 and 'x' in p[1].split('+') and rid not in X_ALLOWED:
+            state = menu_state_before(flat, i)
+            if state != 'closed':
+                errors.append(f'{rid}: `{t}` with the TR menu {state} (X saves page defaults); fix the row or list '
+                              f'it in X_ALLOWED with the screen its X acts on')
+    return errors
+
+
+def known_issue_table(rows):
+    table = {}
+    for key, issue in KNOWN_ISSUES.items():
+        ids = sorted({r['id'] for r in rows if r['id'] in issue['ids'] or re.search(issue['name'], r.get('name', ''))
+                      or any(c in issue['ids'] for c in r.get('covers', []) + r.get('chained', []))})
+        table[key] = {'title': issue['title'], 'reason': issue['reason'], 'rows': ids}
+    return table
 
 
 def modes_of(rid, fields):
@@ -767,8 +891,15 @@ def main(argv=None):
                     help='no hooks/clean_state.py steps (row start: ensure_clean; mode-on rows: mode_off ending)')
     ap.add_argument('--judge', default=None,
                     help='plan "judge" command (e.g. judge/judge.py): the runner queues a judge job per row')
+    ap.add_argument('--judge-args', default='--model grok-gw',
+                    help='extra judge arguments (default: gateway Grok 4.6 high alone; judge PASS = its PASS)')
     ap.add_argument('--stop-after', type=int, default=3,
                     help='plan "stop_after_consecutive_failures" (default 3; 0 = the runner default early stop)')
+    ap.add_argument('--start', choices=['home', 'css', 'any'], default='home',
+                    help='where the console is at launch: home (S-BOOT boots SSBU) or css/any (S-BOOT is '
+                         'hooks/start_route.py:from_anywhere: recognise Training / CSS / main / HOME first, then act)')
+    ap.add_argument('--early', default=None,
+                    help=f'row-name regex run right after the first session row (relaunch: {EARLY!r})')
     a = ap.parse_args(argv)
     rb = Path(a.runbook)
     rows = rs.load_rows(rb, a.rows_dir)
@@ -835,11 +966,22 @@ def main(argv=None):
             if keep & set(ids):
                 keep |= {i for i in ids if i in t_ids}
         run_ids = [i for i in run_ids if i in keep]
+    early = []
+    if a.early:  # the P1-swap rows (and their chained rows) right after the first session row (T-01, the baseline)
+        hosts = [i for i in run_ids[1:] if meta[i]['start'] != 'chain' and re.search(a.early, meta[i]['name'])]
+        for h in hosts:
+            k = run_ids.index(h) + 1
+            early.append(h)
+            while k < len(run_ids) and meta[run_ids[k]]['start'] == 'chain':
+                early.append(run_ids[k])
+                k += 1
+        run_ids = run_ids[:1] + early + [i for i in run_ids[1:] if i not in early]
 
     out = Path(a.out) if a.out else rb / 'rows.json'
     gifs = a.evidence == 'gif'
     b = Builder(acquire=a.acquire, base=out.parent, gifs=gifs, segdir=a.segments_dir)
-    plan = {'game_id': '01006A800016E000', 'start': 'home-ssbu-selected', 'backend': 'hardware',
+    plan = {'game_id': '01006A800016E000', 'start': 'css' if a.start == 'css' else 'home-ssbu-selected',
+            'backend': 'hardware',
             'source': 'switch-hw-runbook (generated by ssbu-switch-remote/tools/runbook_rows_json.py)',
             'segments': {}, 'gates': {'training': dict(TRAINING_GATE), 'tr-menu': dict(MENU_GATE)},
             'recover': [{'run': f'{HOOK}:home', 'check': True}], 'rows': []}
@@ -885,7 +1027,8 @@ def main(argv=None):
         clean = [] if a.no_clean_state else [{'run': f'{CLEAN_HOOK}:ensure_clean', 'check': True}]
         out_rows.append({'id': sr_id, 'name': f'fixture {sid}: {s["name"]} (for {rid})', 'covers': [],
                          'start': 'training', 'chained': [], 'fixture': sid,
-                         'steps': clean + settle_or_gate() + steps, 'own_from': len(clean) + 1})
+                         'steps': clean + settle_or_gate() + steps, 'own_from': len(clean) + 1,
+                         **({'expected': s['fields']['Expected']} if s['fields'].get('Expected') else {})})
         setup_row[sid] = sr_id
         setup_rows.append(sr_id)
         active.add(sid)
@@ -997,9 +1140,22 @@ def main(argv=None):
                 row['steps'].append({'run': f'{CLEAN_HOOK}:mode_off', 'args': {'modes': modes}, 'check': True})
         row['shots'] = labelled_shots(row['steps'], own_from)
     vocab_errors = check_vocabulary(out_rows, b, effect_gates, effect_marks)
+    for rid in run_ids:  # X on an open TR page saves its defaults: refused unless audited (X_ALLOWED)
+        vocab_errors += x_guard(rid, meta[rid]['toks'])
+    for sid, s in fixtures.items():
+        vocab_errors += x_guard(sid, s['toks'])
     if vocab_errors:
         raise SystemExit('effect-gate vocabulary errors:\n  ' + '\n  '.join(vocab_errors))
-    rows_out = [dict(BOOT_ROW), *out_rows, dict(CLOSE_ROW)]
+    boot = dict(BOOT_ROW)
+    if a.start in ('css', 'any'):  # recognise the screen first; never boot over a running SSBU
+        boot = {'id': 'S-BOOT', 'covers': [], 'start': plan['start'],
+                'name': 'from where the console was left (CSS / Training / main / HOME) -> Training, clean state',
+                'steps': [{'run': f'{START_HOOK}:from_anywhere', 'check': True},
+                          *([] if a.no_clean_state else [{'run': f'{CLEAN_HOOK}:ensure_clean', 'check': True}]),
+                          {'run': f'{HOOK}:goto', 'args': {'page': 'Display & Controls', 'open': False},
+                           'check': True}],
+                'evidence': ['the start screen', 'training HUD', 'clean state', 'TR menu tab']}
+    rows_out = [boot, *out_rows, dict(CLOSE_ROW)]
     for i, row in enumerate(rows_out):
         mark_checks(row['steps'])
         if i + 1 < len(rows_out):
@@ -1018,12 +1174,21 @@ def main(argv=None):
         if name in used:  # only the gates this plan's rows check (a --only plan carries no unused gates)
             plan['gates'][name] = gate
     plan['require_effect'] = True  # runner: a row with no passed effect gate (and no judge PASS) is RAN-UNVERIFIED
+    plan['known_issues'] = known_issue_table(out_rows)
+    if early:
+        p1 = sorted(set(plan['known_issues']['a']['rows']) | set(early))
+        plan['evidence_index'] = {EVIDENCE_FILE: {'title': 'P1 swap evidence (known issue a: P1 character swapping '
+                                                           'does not apply): per-row clips as they land',
+                                                  'rows': [r['id'] for r in out_rows if r['id'] in p1]}}
     if a.stop_after:
         plan['stop_after_consecutive_failures'] = a.stop_after
     if a.judge:
-        plan['judge'] = {'cmd': a.judge, 'frames': ['start', 'mid', 'end']}
+        plan['judge'] = {'cmd': a.judge, 'args': shlex.split(a.judge_args), 'frames': ['start', 'mid', 'end'],
+                         'timeout_s': 600, 'wait_s': 900}
     if not a.no_clean_state:
         plan['recover'] = [{'run': f'{HOOK}:home', 'check': True}, {'run': f'{CLEAN_HOOK}:ensure_clean', 'check': True}]
+    if not a.no_clean_state or any(s.get('run', '').startswith(SEEK_HOOK) for r in rows_out
+                                   for s in walk_steps(r['steps'])):
         for name, recipe in CLEAN_SEGMENTS.items():
             plan['segments'].setdefault(name, {'recipe': recipe, 'cap': 15})
             if a.segments_dir != 'segments':
