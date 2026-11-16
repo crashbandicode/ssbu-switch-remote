@@ -56,6 +56,18 @@ The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive 
   timed-row Eden; the Surface is excluded. A ruling was requested (Eden slot first, or card install now).
 - Watcher: `/tmp/switch-remote-watcher-81d86844.ps1`, re-armed on each resume (owner = the claude pid).
 
+## Hardware smoke plan (in order)
+
+1. Discovery finds the console; `smoke.py preflight` (status, capture, records, crash listing).
+2. `smoke.py launch` (first-tile check) → SSBU running, scene report, `gate=allowed`.
+3. Library segments to the character select; single steps to Training and back (shot after each).
+4. Local-wireless lobby with one Eden LDN peer (two-PC rules; the host accepts the guest): `smoke.py lan-check`.
+5. ovlSysmodules: toggle switch-remote OFF with the controller attached (does the virtual pad vanish? check the
+   controllers screen with a capture), then ON; the client reconnects with no reboot.
+6. Update without a reboot: `switch.update` a new `sysmodule.exefs` (`restart`), check STATUS from the new
+   instance; `nro` update + `RELAUNCH`, check the install line in `ultimate/switch-remote/events.log`.
+7. `smoke.py terminate` (crash-report and log fetch), `smoke.py bye`.
+
 ## Next commands
 
 1. Eden proof of the NRO (Yoga; ledger claim). Boot with the diag NRO and `ultimate/switch-remote/config.txt`

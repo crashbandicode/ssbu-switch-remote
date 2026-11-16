@@ -104,6 +104,59 @@ are driven on hardware through a local-wireless lobby (the Switch plus one Eden 
 - **Recovery order with receipts:** STATUS (`app=none exits=n`) → LIST/FILE `crash_reports` (and the new
   `.jpg`) → DISMISS → RECORDS → LAUNCH → STATUS until `gate=allowed`.
 
+## 3a. Start, stop and update without a reboot (operator requirement 2026-11-15 ~01:05Z)
+
+- **ovlSysmodules.** The card has the Tesla overlay `switch/.overlays/ovlSysmodules.ovl`. It lists any module whose
+  `toolbox.json` has `"requires_reboot": false` (ours now does). Toggling uses two calls:
+  - stop: `pmshellTerminateProgram`, a hard kill with no notice, which also deletes `flags/boot2.flag`;
+  - start: `pmshellLaunchProgram`, which also creates the flag.
+
+  Source: ovl-sysmodules `9b114b3` `source/gui_main.cpp:72-101` (GPL-2.0, studied only).
+
+  So nothing may rely on cleanup code at stop:
+  - sockets and service sessions close with the process (kernel);
+  - logs are opened and closed per line;
+  - a PUT that a kill interrupts leaves only `*.sr-stage`, swept at the next start (`sweep_stage`);
+  - the virtual controller detaches after 60 s without input (core `detach_due`), so a kill normally finds
+    none attached.
+
+  **ASSUMPTION:** hid releases a virtual controller whose hid:dbg session dies (otherwise a kill during input
+  could leave a phantom controller until reboot). Settled at the smoke: toggle off while a controller is
+  attached, then check the controllers screen with the capture card.
+- **Start at runtime.** The 10 s delay applies only within 60 s of boot (core `boot_delay_needed`). Everything
+  is initialized from scratch, and the listener retries until the port is free.
+  - Starting twice is harmless: a second instance can't take the port, never gets a client, and so never
+    attaches a controller.
+  - Stopping twice is a no-op in pm.
+- **PUT (updates).** `PUT <key> <size> <sha256>` followed by the bytes. The key must be in `kUpdateTargets`
+  (core.hpp):
+  - `sysmodule.exefs`, `sysmodule.toolbox`, `nro`, `config`, and `data/<name>` under `ultimate/switch-remote/`;
+  - adding a file is ONE explicit row there;
+  - any other key is `ERR not_updatable`.
+
+  The sysmodule handles the file in this order:
+  1. writes it to `<target>.sr-stage`, hashing it as it arrives;
+  2. refuses on a sha256 mismatch, and reads the stage back;
+  3. copies the old file to `ultimate/switch-remote/backups/pre-<new16>.<name>` and reads that back;
+  4. swaps the stage into place;
+  5. reads the target back; if that fails, it restores the backup.
+
+  The reply carries `old= new= backup= readback=ok`, and the client writes it to a receipt
+  (`switch.update`). At most 2 MiB per file.
+- **Taking effect.**
+  - `sysmodule.exefs`: after `RESTART`, the sysmodule launches a fresh instance of its own program id through
+    `pm:shell`, then detaches the controller, closes its sockets and exits. The new instance loads the
+    `exefs.nsp` now on the card, and the client reconnects (`switch.restart`). AMS pm refuses a second
+    instance only for applications (`pm_process_manager.cpp:131`), and ldr `PinProgram` has no uniqueness
+    check (`ldr_process_creation.cpp:918-921`); **ASSUMPTION** until the smoke.
+  - `nro`: at the next Smash launch (`RELAUNCH` = terminate + LAUNCH).
+  - `config`: at the next start.
+  - `SHUTDOWN` exits cleanly; starting again is then ovlSysmodules' or a reboot's job.
+- **Tests.** Core: `sha256_known_vectors`, `update_allowlist_is_own_files_only`, `lifecycle_rules`. Host
+  (loopback): `test_put_updates_own_file_with_backup_and_receipt`, `test_put_bad_sha_or_other_files_change_nothing`,
+  `test_restart_reconnects_to_a_fresh_instance`, `test_shutdown_detaches_and_exits`,
+  `test_start_sweeps_interrupted_put_stage`.
+
 ## 4. Logs
 
 `LIST <root> [dir]` and `FILE <root> <offset> <max> <path>` read only these roots: `crash_reports`,
@@ -220,7 +273,7 @@ stays host-tested.
   - No service is touched for 10 s after start, nothing calls `fatalThrow`, and failures are logged while the
     module idles.
   - **Recovery:** delete `atmosphere/contents/4200000000005352/` (or its `flags/boot2.flag`) in hekate UMS.
-- **Permissions.** `fsp-srv set:sys hid:dbg bsd:u pm:dmnt pm:info ns:dev ns:am2 pgl`; no debug syscalls.
+- **Permissions.** `fsp-srv set:sys hid:dbg bsd:u pm:dmnt pm:info pm:shell ns:dev ns:am2 pgl`; no debug syscalls.
 - **Input.** Fail closed (§2). HOME/A only through the fixed LAUNCH/DISMISS sequences (§3).
 - **Exposure.** Off by default; token; private peers; one client.
 - **NRO.** No hooks, one thread on a static stack, one install line; the diag build logs mode changes.
@@ -248,6 +301,7 @@ stays host-tested.
 | "it should have a sysmmodule s that you can launch the game yourself and get the logs if it crashes" | sysmodule LAUNCH/TERMINATE/RELAUNCH with the first-tile check; LIST/FILE over crash and plugin logs | `test_launch_only_without_application`, `test_launch_refused_unless_ssbu_is_the_first_tile`, `test_terminate_and_exit_count`, `test_list_and_file_roots` |
 | "for the screenshot part I mean and hardware gifs" | capd recordings with a wall-clock sidecar; GIF cut and encode | `test_gap_counts_missing_frames`, `test_card_no_signal_screen_is_detected`, `test_cut_window_from_sidecar` |
 | "OBS may still be better for the photo/gif part" | OBS primary when it runs (stills, record, replay buffer); capd fallback | `test_finds_the_card_source_and_screenshots`, `test_record_and_replay`, `test_pick_backend_prefers_obs_then_falls_back` |
+| "we want it to be compatible with the sysmmodule plugin so we don't have to reboot forchanges" | requires_reboot false; hard-kill-safe lifecycle; PUT with receipts for own files; RESTART self-relaunch | `test_restart_reconnects_to_a_fresh_instance`, `test_put_updates_own_file_with_backup_and_receipt`, `test_shutdown_detaches_and_exits`, `test_start_sweeps_interrupted_put_stage` |
 | "online testing should still be possible over local wireless lobby. Those paths should be shared with nso path" | gate allows the local-wireless family, refuses NSO, fails closed when ambiguous; one report path for both; smoke over a local-wireless lobby | `test_local_wireless_lobby_allows_input_nso_refuses`, `test_online_scene_refuses` |
 
 ## Open points
