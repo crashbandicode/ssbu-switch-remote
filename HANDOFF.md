@@ -10,6 +10,15 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **~20:20Z HARDWARE TESTING STOPPED (the operator).** Console idle in Training (SSBU running); pad reset + stale claim
+  released via `switch_hw.py down artifacts/switch-hw-feature-ledger/run-1`; OBS idle.
+  - **STANDBY: the reship card install** when the primary forwards the NRO path + sha256 + go (from deluxe-gamespeed-sol,
+    `rc15/hw-reship`): close SSBU → DBI FTP route → an own_install job like `card-jobs/l1-tr-legend` (authorized.json +
+    order/go; preflight table; rollback on card + local; readback; re-hash the others; INSTALL.md) → route out →
+    relaunch. NO other console input until then.
+  - **On the card now:** TR legend ffd2f74a (80bb1203), Deluxe 0.10.8, tile-cursor aid 66f00442 (added 19:2xZ,
+    `artifacts/switch-remote-card/install-t1-tile-cursor/`), + 17 others (20 NROs).
+  - The handover doc for any HW driver: `artifacts/switch-hw-runbook/HANDOVER-TO-OPUS.md`.
 - **~18:40Z REFOCUS (the operator: the HW run was "just clicking around").** The old strict plan is STOPPED at a row
   boundary (the session lane keeps the claim/capture; `switch-hw-session-2/out` keeps its receipts). A NEW plan of in-game
   FEATURE EFFECT rows (before → the input → the visible gameplay result), one per FEATURE-LEDGER feature + the rc.15
