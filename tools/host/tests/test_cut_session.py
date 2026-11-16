@@ -28,6 +28,43 @@ def gif_label(name, preset='evidence', out=None, width=640, fps=15, max_duration
                        'max_duration_s': max_duration_s, 'max_bytes': max_bytes}, separators=(',', ':'))
 
 
+class WithoutPyGObject(unittest.TestCase):
+    """The module imports, parses, pairs and reports exit 2 on a machine with no PyGObject (gi blocked)."""
+
+    def test_import_parse_and_exit_2_without_gi(self):
+        import importlib.util
+        blocked = {name: None for name in ('gi', 'gi.repository')}
+        saved = {name: sys.modules.get(name) for name in blocked}
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        try:
+            sys.modules.update(blocked)
+            with self.assertRaises(ImportError):
+                import gi  # noqa: F401  (proves the block is in force)
+            spec = importlib.util.spec_from_file_location('cut_session_nogi', Path(cs.__file__))
+            fresh = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(fresh)
+            (d / 'recording.jsonl').write_text(
+                json.dumps(mark('start')) + '\n' + json.dumps(mark('row-start', 'R1', None, 1000)) + '\n' +
+                json.dumps(mark('row-end', 'R1', None, 2000)) + '\n{"event":"sh', encoding='utf-8')
+            marks, bad = fresh.parse_marks(d / 'recording.jsonl')
+            self.assertEqual(len(marks), 3)
+            self.assertEqual(len(bad), 1)
+            self.assertEqual(len(fresh.pair_marks(marks)['rows']), 1)
+            self.assertEqual(fresh.clip_plan('rows', {}, 0, 1000)['preset'], 'evidence')
+            (d / 'recording.jsonl').write_text(json.dumps(mark('row-start', 'R1', None, 1)) + '\n', encoding='utf-8')
+            summary, code = fresh.run(d)                      # exit 2 needs no decoder
+            self.assertEqual(code, fresh.EXIT_NO_START)
+            with self.assertRaises(ImportError):              # only the decode path wants gi
+                fresh._gst()
+        finally:
+            for name, module in saved.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+
+
 class ParseMarks(unittest.TestCase):
     def write(self, text):
         d = Path(tempfile.mkdtemp())
@@ -210,6 +247,29 @@ class RunErrors(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn('no start event', err.getvalue())
         self.assertFalse(json.loads(out.getvalue())['ok'])
+
+    def test_runner_reason_is_reported_for_exit_2(self):
+        (self.d / 'actions.jsonl').write_text(
+            json.dumps({'call': 'x'}) + '\nnot json\n' +
+            json.dumps({'session_recording': 'unavailable', 'error': "OBS unavailable: ObsError('auth')", 'time': 1}) + '\n',
+            encoding='utf-8')
+        summary, code = cs.run(self.d)                       # no recording.jsonl at all
+        self.assertEqual(code, cs.EXIT_NO_START)
+        self.assertEqual(summary['session_unavailable'], "OBS unavailable: ObsError('auth')")
+        self.assertIn("runner reason: OBS unavailable", summary['error'])
+        self.write([mark('row-start', 'R1', None, 1000)])    # a log with marks but no start
+        summary, code = cs.run(self.d)
+        self.assertEqual(code, cs.EXIT_NO_START)
+        self.assertIn('no start event', summary['error'])
+        self.assertIn('runner reason', summary['error'])
+        (self.d / 'actions.jsonl').write_text(json.dumps({'session_recording': 'unavailable', 'reason': 'no card'}) + '\n')
+        self.assertEqual(cs.run(self.d)[0]['session_unavailable'], 'no card')
+
+    def test_no_runner_record_leaves_the_message_plain(self):
+        (self.d / 'actions.jsonl').write_text(json.dumps({'call': 'x'}) + '\n')
+        summary, _ = cs.run(self.d)
+        self.assertNotIn('session_unavailable', summary)
+        self.assertNotIn('runner reason', summary['error'])
 
     def test_missing_recording_exits_3(self):
         self.write([mark('start'), mark('stop', path='/nonexistent/rec.mp4')])

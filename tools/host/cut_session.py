@@ -490,17 +490,44 @@ def find_recording(marks, explicit):
         return None
 
 
+def unavailable_reason(out_dir):
+    """Why the runner could not start the session recording, from its record in <out>/actions.jsonl
+    ({"session_recording": "unavailable", "error"|"reason": ...}); None when it logged none."""
+    reason = None
+    try:
+        lines = (Path(out_dir) / 'actions.jsonl').read_text(encoding='utf-8', errors='replace').splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and record.get('session_recording') == 'unavailable':
+            reason = str(record.get('reason') or record.get('error') or 'unavailable')
+    return reason
+
+
+def _no_start(out_dir, what):
+    reason = unavailable_reason(out_dir)
+    message = f'{what}: the session recording was unavailable (nothing to cut)'
+    summary = {'ok': False, 'error': message}
+    if reason:
+        summary['error'] = f'{message}; runner reason: {reason}'
+        summary['session_unavailable'] = reason
+    return summary, EXIT_NO_START
+
+
 def run(out_dir, rows=None, only=None, recording=None, partial=False, offset_ms=0.0):
     """Cut everything; returns (summary, exit_code)."""
     t0 = time.monotonic()
     out_dir = Path(out_dir)
     log = out_dir / 'recording.jsonl'
     if not log.is_file():
-        return {'ok': False, 'error': f'{log} not found: no session recording was marked'}, EXIT_NO_START
+        return _no_start(out_dir, f'{log} not found: no session recording was marked')
     marks, bad = parse_marks(log)
     if not any(m.get('event') == 'start' for m in marks):
-        return {'ok': False, 'error': f'{log} has no start event: the session recording was unavailable '
-                                      '(nothing to cut)'}, EXIT_NO_START
+        return _no_start(out_dir, f'{log} has no start event')
     source = find_recording(marks, recording)
     if source is None:
         return {'ok': False, 'error': 'the session recording file was not found: pass --recording PATH '
