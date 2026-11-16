@@ -11,6 +11,13 @@ this run follows). Only these destinations are allowed:
   atmosphere/contents/01006A800016E000/romfs/skyline/plugins/libssbu_switch_remote.nro
   atmosphere/contents/4200000000005352/exefs.nsp | toolbox.json | flags/boot2.flag
   ultimate/switch-remote/config.txt
+  atmosphere/contents/4200000000004150/exefs.nsp | toolbox.json      (sys-autopilot fallback; never its boot2.flag)
+  config/sys-autopilot/config.ini
+
+An optional `remove.txt` (one path per line, # comments) deletes allowed files, plus sys-autopilot's
+flags/boot2.flag (ovlSysmodules creates it when it starts a module). Removed files are kept locally under before/,
+and a non-empty one also on the card (ultimate/switch-remote/backups/removed-<sha16>.<name>); the receipt row says
+`removed` (or `already_absent`) and the readback confirms the file is gone.
 
 preflight: refuses any other path; records the card's current sha256 of each destination and of every file in the
   plugins folder and our sysmodule folder (the "before" table); keeps local copies of the files to be replaced.
@@ -38,10 +45,18 @@ ALLOWED = (
     'atmosphere/contents/4200000000005352/toolbox.json',
     'atmosphere/contents/4200000000005352/flags/boot2.flag',
     'ultimate/switch-remote/config.txt',
+    # sys-autopilot, the fallback driver (primary ruling 2026-11-16: its folder counts as ours). Deliberately NO
+    # boot2.flag to add: its __appInit diagAborts (a fatal at boot) on any init failure; it is started by hand.
+    'atmosphere/contents/4200000000004150/exefs.nsp',
+    'atmosphere/contents/4200000000004150/toolbox.json',
+    'config/sys-autopilot/config.ini',
 )
-WATCH_DIRS = ('atmosphere/contents/01006A800016E000/romfs/skyline/plugins', 'atmosphere/contents/4200000000005352')
+# remove.txt may also delete these (ovlSysmodules CREATES boot2.flag when A starts a module; gui_main.cpp:96-100).
+REMOVABLE = ALLOWED + ('atmosphere/contents/4200000000004150/flags/boot2.flag',)
+WATCH_DIRS = ('atmosphere/contents/01006A800016E000/romfs/skyline/plugins', 'atmosphere/contents/4200000000005352',
+              'atmosphere/contents/4200000000004150')
 BACKUP_DIR = 'ultimate/switch-remote/backups'
-SECRET = ('ultimate/switch-remote/config.txt',)  # its hash goes in the receipt; its content never in any output
+SECRET = ('ultimate/switch-remote/config.txt', 'config/sys-autopilot/config.ini')  # its hash goes in the receipt; its content never in any output
 
 
 def sha(data):
@@ -94,6 +109,15 @@ class Ums:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, p)
+        dfd = os.open(p.parent, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+
+    def remove(self, rel):
+        p = self.path(rel)
+        os.remove(p)
         dfd = os.open(p.parent, os.O_RDONLY)
         try:
             os.fsync(dfd)
@@ -154,6 +178,9 @@ class Mtp:
                     self._gio('remove', self.uri(rel), check=True)
                 self._gio('copy', '-T', str(local), self.uri(rel), check=True)
 
+    def remove(self, rel):
+        self._gio('remove', self.uri(rel), check=True)
+
     def listdir(self, rel, _prefix=None):
         r = self._gio('list', '-a', 'standard::type', self.uri(rel))
         if r.returncode != 0:
@@ -175,14 +202,29 @@ def transport(kind, root):
     return Ums(root) if kind == 'ums' else Mtp(root)
 
 
+def job_removals(job):
+    path = Path(job) / 'remove.txt'
+    if not path.exists():
+        return []
+    rels = [line.strip() for line in path.read_text().splitlines() if line.strip() and not line.startswith('#')]
+    bad = [r for r in rels if r not in REMOVABLE]
+    if bad:
+        raise SystemExit(f'refused: not removable switch-remote files: {bad}')
+    sd = Path(job) / 'sd'
+    both = [r for r in rels if (sd / r).exists()]
+    if both:
+        raise SystemExit(f'refused: both written and removed by one job: {both}')
+    return rels
+
+
 def job_files(job):
     sd = Path(job) / 'sd'
-    files = sorted(str(p.relative_to(sd)) for p in sd.rglob('*') if p.is_file())
+    files = sorted(str(p.relative_to(sd)) for p in sd.rglob('*') if p.is_file()) if sd.exists() else []
     bad = [f for f in files if f not in ALLOWED]
     if bad:
         raise SystemExit(f'refused: not switch-remote files: {bad}')
-    if not files:
-        raise SystemExit('refused: no files under sd/')
+    if not files and not job_removals(job):
+        raise SystemExit('refused: no files under sd/ and no remove.txt')
     return {f: (sd / f).read_bytes() for f in files}
 
 
@@ -209,16 +251,18 @@ def preflight(job, card, kind):
     if not order:
         raise SystemExit('refused: order.txt (the order this install follows) is missing or empty')
     new = job_files(job)
-    watched = sorted(set(sum((card.listdir(d) for d in WATCH_DIRS), [])) | set(new))
+    removals = job_removals(job)
+    watched = sorted(set(sum((card.listdir(d) for d in WATCH_DIRS), [])) | set(new) | set(removals))
     before = table(card, watched)
     keep = Path(job) / 'before'
     for rel, h in before.items():
-        if rel in new and h:
+        if (rel in new or rel in removals) and h:
             (keep / rel).parent.mkdir(parents=True, exist_ok=True)
             (keep / rel).write_bytes(card.read(rel))
     receipt = {'phase': 'preflight', 'time': now(), 'transport': kind, 'order': order,
                'files': {rel: {'new_sha256': show(rel, sha(data)), 'bytes': len(data),
                                'card_sha256_before': show(rel, before[rel])} for rel, data in new.items()},
+               'removals': {rel: show(rel, before[rel]) for rel in removals},
                'watched_before': {rel: show(rel, h) for rel, h in before.items()},
                '_before_raw': before}
     write_receipt(job, 'preflight-receipt.json', receipt)
@@ -264,7 +308,33 @@ def install(job, card, kind):
                 card.write(rel, old)
                 row['restored'] = sha(card.read(rel)) == sha(old)
             break
-    others = [rel for rel in before if rel not in new]
+    removals = job_removals(job) if failed is None else []
+    for rel in removals:
+        row = {'dest': rel, 'before': show(rel, before.get(rel)), 'new': None, 'bytes': 0}
+        if before.get(rel) is None:
+            row.update(after=None, action='already_absent', readback_ok=True)
+        else:
+            old = card.read(rel)
+            if old:  # a non-empty file keeps a rollback copy on the card too (an empty flag needs none)
+                backup = f'{BACKUP_DIR}/removed-{sha(old)[:16]}.{rel.rsplit("/", 1)[-1]}'
+                card.write(backup, old)
+                row['rollback_copy'] = backup
+                row['rollback_readback_ok'] = sha(card.read(backup)) == sha(old)
+                if not row['rollback_readback_ok']:
+                    failed = f'rollback copy of {rel} did not read back'
+                    rows.append(row)
+                    break
+            card.remove(rel)
+            gone = not card.exists(rel)
+            row.update(after=None, action='removed', readback_ok=gone,
+                       local_backup=str(Path(job) / 'before' / rel))
+            rows.append(row)
+            if not gone:
+                failed = f'{rel} still present after remove'
+                break
+            continue
+        rows.append(row)
+    others = [rel for rel in before if rel not in new and rel not in removals]
     after_others = table(card, others)
     changed = sorted(rel for rel in others if after_others[rel] != before[rel])
     receipt = {'phase': 'install', 'time': now(), 'transport': kind, 'order': pre['order'], 'files': rows,

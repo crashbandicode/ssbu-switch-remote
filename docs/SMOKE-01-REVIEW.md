@@ -29,8 +29,9 @@ leave the listener silently not accepting (poll() doesn't always report it)" (`s
 CHANGELOG lines 94-95). r3 bound once at boot, before DHCP; that is the **probable root cause** of the r3 symptom
 (ARP answers, TCP times out with no RST). It also takes part in PSC sleep/wake; per its CHANGELOG, a sleep with
 sockets open crashes the console on wake (`server.c:187-219`). License: MIT is declared only in `package.json`,
-and there is no LICENSE file, so it is study-only and nothing is copied. Proposed r5 (awaiting the primary's
-ruling): r4 plus an IP-change listener rebuild plus PSC sleep handling, attributed.
+and there is no LICENSE file, so it is study-only and nothing is copied. Ruled and built (2026-11-16): r5
+(`1cda5f7`) is r4 plus an IP-change listener rebuild, PSC sleep handling and default socket sizes, attributed
+(DESIGN.md §11, `docs/PROVENANCE.md`). sys-autopilot itself is staged as a hand-started fallback.
 
 ## What r4 (sysmodule 0.2.0, `9d8a027`, built, NOT installed) changes
 
@@ -51,11 +52,15 @@ ruling): r4 plus an IP-change listener rebuild plus PSC sleep handling, attribut
 
 ## Next, when the operator can
 
-1. Put the console in hekate UMS or DBI MTP.
-2. Run `tools/host/resume_smoke.ps1 -Phase card`. It copies the OLD `sysmodule.log`, `status.txt`, `events.log`,
-   and the crash-report and boot2-flag listings read-only, then installs r4 with receipts.
+1. Put the console in hekate UMS or DBI MTP (after the primary's order for the CARD INSTALL REQUEST).
+2. Run `tools/host/resume_smoke.ps1 -Phase card`.
+   - It copies the OLD `sysmodule.log`, `status.txt` and `events.log`, plus the crash-report and both flags
+     listings, read-only.
+   - Then it installs r5 (with boot2) and the sys-autopilot fallback (without boot2), with receipts.
 3. The operator reboots the console.
-4. Run `tools/host/resume_smoke.ps1 -Phase smoke` (discovery, preflight, launch).
+4. Run `tools/host/resume_smoke.ps1 -Phase smoke`: discovery (2 min), then preflight and launch.
+5. If r5 does not listen, the operator presses A then Y on sys-autopilot in ovlSysmodules, then
+   `-Phase fallback` (DESIGN.md §11).
 
 The old log decides between the two remaining explanations: not launched (no log at all, or no line since the last
 boot), or launched and stuck or failing (the last line names the stage).

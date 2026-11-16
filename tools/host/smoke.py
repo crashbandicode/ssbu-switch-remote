@@ -10,6 +10,10 @@
   smoke.py --host IP --out DIR online-check       status + one refused tap (expects inject_refused online_*; NSO only)
   smoke.py --host IP --out DIR terminate          TERMINATE, then the new crash reports and our logs fetched
   smoke.py --host IP --out DIR bye                RESET, DETACH, BYE (clean disconnect)
+  smoke.py --backend autopilot --host IP --out DIR fallback-check
+                                                  the sys-autopilot fallback (DESIGN.md 11): status, then on the HOME
+                                                  menu RIGHT and LEFT taps (cursor moves to tile 2 and back), a held
+                                                  ZL released by its lease, RESET; a shot after each. step/stick/bye too.
 
 Receipts: DIR/receipts.jsonl (one line per action: wall time, action, reply, screenshot). Screenshots: DIR/shots/.
 The token is read from SWITCH_REMOTE_TOKEN_FILE / ~/.config/switch-remote/token and never written anywhere.
@@ -29,8 +33,14 @@ SSBU = '0x1006a800016e000'
 
 
 class Smoke:
-    def __init__(self, host, port, out):
-        self.c = sr.SwitchClient(host, port, sr.read_token(), actions_log=str(Path(out) / 'switch-actions.jsonl'))
+    def __init__(self, host, port, out, backend='switch'):
+        log = str(Path(out) / 'switch-actions.jsonl')
+        if backend == 'autopilot':
+            import autopilot
+            self.c = autopilot.AutopilotClient(host, port or autopilot.AUTOPILOT_PORT, sr.read_token(), actions_log=log)
+        else:
+            self.c = sr.SwitchClient(host, port or sr.DEFAULT_PORT, sr.read_token(), actions_log=log)
+        self.backend = backend
         self.out = Path(out)
         (self.out / 'shots').mkdir(parents=True, exist_ok=True)
         self.n = len(list((self.out / 'shots').glob('*.png')))
@@ -120,7 +130,23 @@ class Smoke:
             self.c.request('switch.fetch', {'root': 'ultimate', 'path': rel, 'out': str(logs / rel)})
         return self.receipt('logs fetched', {'ok': True, 'new_crash_reports': new, 'dir': str(logs)}, shot=False)
 
+    def fallback_check(self):
+        st = self.call('status')
+        if not st.get('ok') or st['result'].get('state') != 'reachable':
+            return st
+        for button in ('dright', 'dleft'):
+            self.call('input.button', {'button': button, 'state': 'tap', 'duration_ms': 100})
+            time.sleep(0.5)
+        self.call('input.button', {'button': 'zl', 'state': 'press', 'lease_ms': 300}, shot=False)
+        self.c.wait_leases()
+        held = self.c.request('status').get('result', {})
+        self.receipt('lease released', {'ok': not held.get('leases'), 'status': held}, shot=False)
+        return self.call('input.reset')
+
     def bye(self):
+        if self.backend == 'autopilot':
+            self.c.close()
+            return self.receipt('released (input.clear)', {'ok': True}, shot=False)
         for m in ('input.reset', 'switch.detach'):
             self.call(m, shot=False)
         try:
@@ -134,12 +160,13 @@ class Smoke:
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--host', required=True)
-    ap.add_argument('--port', type=int, default=sr.DEFAULT_PORT)
+    ap.add_argument('--port', type=int)
+    ap.add_argument('--backend', choices=['switch', 'autopilot'], default='switch')
     ap.add_argument('--out', required=True)
     ap.add_argument('cmd')
     ap.add_argument('args', nargs='*')
     a = ap.parse_args(argv)
-    s = Smoke(a.host, a.port, a.out)
+    s = Smoke(a.host, a.port, a.out, a.backend)
     if a.cmd == 'preflight':
         s.preflight()
     elif a.cmd == 'launch':
@@ -159,8 +186,12 @@ def main(argv=None):
         s.terminate()
     elif a.cmd == 'bye':
         s.bye()
+    elif a.cmd == 'fallback-check' and a.backend == 'autopilot':
+        s.fallback_check()
     else:
         ap.error(f'unknown command {a.cmd}')
+    if a.backend == 'autopilot':
+        s.c.wait_leases()  # never exit with a host-side lease pending
     s.c.conn.close()
     return 0
 

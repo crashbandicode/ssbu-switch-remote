@@ -17,8 +17,10 @@ runner (tools/eden-runner/runner.py) drives the console with its existing rows, 
 
 The socket string `switch://HOST:PORT` selects this client (playbook-patch/; SWITCH_REMOTE_DIR = tools/host). The token comes from
 SWITCH_REMOTE_TOKEN_FILE (default ~/.config/switch-remote/token) and is never printed or logged.
-CLI: switch_remote.py --host H [--port P] ping|status|shot OUT|press BUTTON [MS]|stick X Y [MS]|
-     play FILE|launch|terminate|relaunch|dismiss|list ROOT [DIR]|fetch ROOT PATH OUT|call METHOD [JSON]
+CLI: switch_remote.py --host H [--port P] [--backend switch|autopilot] ping|status|shot OUT|press BUTTON [MS]|
+     hold BUTTON [MS]|stick X Y [MS]|reset|play FILE|launch|terminate|relaunch|dismiss|list ROOT [DIR]|
+     fetch ROOT PATH OUT|call METHOD [JSON]
+`autopilot://HOST[:4150]` (or --backend autopilot) selects the sys-autopilot fallback (autopilot.py).
 """
 import argparse
 import json
@@ -501,24 +503,38 @@ class SwitchClient:
 
 
 def make_client(socket_string, **kw):
-    """`switch://HOST:PORT` -> SwitchClient (the runner's client factory calls this)."""
-    if not socket_string.startswith('switch://'):
-        raise ValueError(f'not a switch:// address: {socket_string}')
-    hostport = socket_string[len('switch://'):].rstrip('/')
+    """`switch://HOST:PORT` -> SwitchClient; `autopilot://HOST[:4150]` -> the sys-autopilot fallback (autopilot.py).
+    The runner's client factory calls this."""
+    for scheme in ('switch://', 'autopilot://'):
+        if socket_string.startswith(scheme):
+            break
+    else:
+        raise ValueError(f'not a switch:// or autopilot:// address: {socket_string}')
+    hostport = socket_string[len(scheme):].rstrip('/')
     host, _, port = hostport.rpartition(':') if ':' in hostport else (hostport, '', '')
+    if scheme == 'autopilot://':
+        import autopilot
+        return autopilot.AutopilotClient(host or hostport, int(port) if port else autopilot.AUTOPILOT_PORT, **kw)
     return SwitchClient(host or hostport, int(port) if port else DEFAULT_PORT, **kw)
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--host', required=True)
-    ap.add_argument('--port', type=int, default=DEFAULT_PORT)
+    ap.add_argument('--port', type=int)
+    ap.add_argument('--backend', choices=['switch', 'autopilot'], default='switch',
+                    help='autopilot = the sys-autopilot fallback (input, status, capture only)')
     ap.add_argument('--token-file')
     ap.add_argument('--capd', default=DEFAULT_CAPD)
     ap.add_argument('cmd')
     ap.add_argument('args', nargs='*')
     a = ap.parse_args(argv)
-    c = SwitchClient(a.host, a.port, read_token(a.token_file), a.capd)
+    if a.backend == 'autopilot':
+        import autopilot
+        c = autopilot.AutopilotClient(a.host, a.port or autopilot.AUTOPILOT_PORT, read_token(a.token_file),
+                                      capd_socket=a.capd)
+    else:
+        c = SwitchClient(a.host, a.port or DEFAULT_PORT, read_token(a.token_file), a.capd)
     cmd, args = a.cmd, a.args
     table = {
         'ping': lambda: c.request('ping'),
@@ -539,10 +555,15 @@ def main(argv=None):
         'put': lambda: c.request('switch.put', {'key': args[0], 'path': os.path.abspath(args[1])}),
         'restart': lambda: c.request('switch.restart'),
         'shutdown': lambda: c.request('switch.shutdown'),
+        'hold': lambda: c.request('input.button', {'button': args[0], 'state': 'press',
+                                                   'lease_ms': int(args[1]) if len(args) > 1 else 1000}),
+        'reset': lambda: c.request('input.reset'),
     }
     if cmd not in table:
         ap.error(f'unknown command {cmd}')
     reply = table[cmd]()
+    if hasattr(c, 'wait_leases'):
+        c.wait_leases()  # autopilot: host-side leases must run out before this process exits
     print(json.dumps(reply, default=lambda o: f'<{len(o)} bytes>' if isinstance(o, bytes) else str(o)))
     return 0 if reply.get('ok') else 1
 

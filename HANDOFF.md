@@ -1,6 +1,6 @@
 # HANDOFF: switch-remote
 
-Updated 2026-11-15 22:20Z. Worker: switch-remote (Opus 5.5, high), session `81d86844-b65c-42b8-bf83-c7b6d7ba2c32`,
+Updated 2026-11-16 ~03:30Z. Worker: switch-remote (Opus 5.5, high), session `81d86844-b65c-42b8-bf83-c7b6d7ba2c32`,
 spawned by the rc6-integration primary. Playbook followed: `ssbu-mod-playbook` `3332c0d`.
 
 ## Objective and scope
@@ -19,6 +19,15 @@ The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive 
   sysmodule confirms SSBU is the first tile; all other input fails closed.
 - B: ns2bench was evaluated: GPL-3.0, Switch 2, needs external hardware. We keep our own and copy nothing.
   OBS is the primary capture backend when it runs.
+- Later (2026-11-15/16): LAN only, and the gate allows local wireless while refusing NSO (§2, §6a). ovlSysmodules
+  compatibility with no-reboot updates (§3a). Smoke 01 parked (operator away). **r5 + sys-autopilot fallback
+  (primary ruling 2026-11-16 ~03:0xZ):**
+  - Build r5 and host-test it, but don't install it.
+  - Keep sys-autopilot as a hand-started fallback, staged without boot2, with a thin `autopilot://` backend.
+    Only one may hold the virtual controller at a time.
+  - Resume plan: r3 logs, then install r5 and the fallback, reboot, smoke r5, and switch to the fallback if r5
+    doesn't listen within 2 min.
+  - Post the CARD INSTALL REQUEST table first. No card actions now; the console is parked.
 
 ## State
 
@@ -30,8 +39,8 @@ The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive 
   `1ab635cf9398d2a19bdd3b90cf808d3ffa03332299eea6d886c7ad25bf73c93b`; the image is 1.38 MiB. Artifacts:
   `/home/user/ssbu-switch-remote-work/sysmodule/39ebc14/`. A later commit that only moved host files needs no
   rebuild (`sysmodule/` unchanged except the Makefile comment).
-- Host: 40 tests OK (`/usr/bin/python3 -I -m unittest discover -s tools/host/tests`, after
-  `make -C sysmodule out/loopback`). Core: 159 checks.
+- Host: 61 tests OK (`/usr/bin/python3 -I -m unittest discover -s tools/host/tests`, after
+  `make -C sysmodule out/loopback`); card tool 16 OK (`-s tools/card/tests`). Core: 239 checks (2026-11-16 ~03:25Z).
 - Capture card: `/dev/video4` works, but there is no signal yet: the console is in hekate UMS, mounted
   read-only for us at `/run/media/intpa/SWITCH SD`. OBS 32.2.0 (snap) is installed but not running.
 - Ledger: no open claims of ours. The first sysmodule build left `bid=cb1efd13` open; it was released by hand.
@@ -47,24 +56,54 @@ The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive 
 - LAN only (operator, 2026-11-15 ~23:10Z): the console will be blocked from the internet. No hardening beyond the token, private peers and the gate; online-path testing goes over a LOCAL-WIRELESS lobby (Switch + one Eden LDN peer; operator correction ~23:14Z): `smoke.py lan-check` expects a 0x0201xxxx scene with gate allowed; NSO refusal is code+test only. DESIGN.md section 6a.
 - Card r2 (2026-11-15 23:17Z, own_install, UMS): sysmodule exefs.nsp 1ab635cf… → f3fe636a… (c537d5f, local wireless allowed); readback OK, rollback copy ultimate/switch-remote/backups/pre-f3fe636a1cd7bd0f.exefs.nsp, 22 other files unchanged. Receipts: /home/user/smash-training-lobby/artifacts/switch-remote-card/install-r2/. NRO unchanged (1b5391a3…).
 - Card r3 (2026-11-16 01:19Z, own_install, UMS): sysmodule 45062a9 exefs.nsp f3fe636a… → 7ac69bc4… (151,649 B, image 1.46 MB incl. 1 MiB heap), toolbox.json → requires_reboot false (1b4da43d…); readbacks OK, rollback copies in ultimate/switch-remote/backups/, 21 other files unchanged. Receipts: artifacts/switch-remote-card/install-r3/.
-- Console discovery poller: `tools/host/discover.py` in the background (every 120 s since 23:12Z, 2 h), log
-  `/home/user/ssbu-switch-remote-work/discover.log`.
+- Console discovery poller: stopped (time limit) at 03:1xZ, never found a listener (last round 03:10:59Z), log
+  `/home/user/ssbu-switch-remote-work/discover.log`. Not restarted: `resume_smoke.ps1` runs its own discovery.
 - Eden proof (non-blocking, primary ruling): queued as Yoga user unit `sr-nro-01-queue` (plan `eden/sr-nro-01/`,
   staging `/home/user/eden-runs-staging/sr-nro-01/`, log `queued.log` there, run `/home/user/eden-runs/sr-nro-01/`,
   summary `sr-summary.json`). Stop it with `systemctl --user stop sr-nro-01-queue` on the Yoga (before Up: nothing to undo).
 - Hardware smoke runner: `tools/host/smoke.py --host IP --out DIR preflight|launch|play SEG..|step BTN|online-check|terminate|bye`.
 - Eden proof ran 2026-11-15 23:00Z (primary GO), two short Yoga boots: install line, channel, title and main gate `allowed` PASS; online rows blocked by the profile (no LAN online, error 2306-0520). `eden/sr-nro-01/RESULTS.md`. The Yoga has a perf-sensitive calibration (dgs-cal-b2) and the XPS a
   timed-row Eden; the Surface is excluded. A ruling was requested (Eden slot first, or card install now).
-- Watcher: `/tmp/switch-remote-watcher-81d86844.ps1`, re-armed on each resume (owner = the claude pid).
+- Watcher: `/tmp/claude-1000/sr-model-watch-81d86844.py` (expects claude-opus-5-5/high), re-armed on each
+  resume (owner = the claude pid).
 
 ## Smoke 01 (2026-11-16 01:30Z): BLOCKED, parked
 
-The sysmodule was not listening (console at HOME, IP 172.30.254.53). Static review: `docs/SMOKE-01-REVIEW.md`. r4 (sysmodule 0.2.0, `9d8a027`, exefs.nsp 155,057 B, sha256 `e0365531ac293f626d96ece2540a37e3a7157d9826a507080b6587af3b6a7393`) is built and self-diagnosing. It is NOT installed; its job is `/home/user/ssbu-switch-remote-work/card-jobs/r4-sysmodule-9d8a027`. Resume:
-`tools/host/resume_smoke.ps1 -Phase card` (UMS or DBI: old logs read-only, then the r4 install), the operator reboots, then `-Phase smoke`.
+The sysmodule was not listening (console at HOME, IP 172.30.254.53). Static review: `docs/SMOKE-01-REVIEW.md`.
+Probable root cause: the listener was bound before DHCP. r4 (`9d8a027`, self-diagnosing) is superseded by r5.
 
-## Option (d), awaiting ruling (posted 2026-11-16 ~03:0xZ)
+## r5 + sys-autopilot fallback (ruled 2026-11-16; built, staged, NOT installed)
 
-Use sys-autopilot 1.5.0 (release zip sha256 a409ee7d…, exefs b132156a…, id 4200000000004150; no license file, internal tool) as the console driver; retire our sysmodule (remove its boot2.flag with receipts); keep our NRO as the scene reporter (new `scene_host` option → host receiver); move the online gate, launch/dismiss/terminate sequences and the update allowlist host-side. Re-ruling needed for the launch gate (host-side still check instead of ns records). Card install request contents are in the INBOX post. Evidence: /home/user/ref/sys-autopilot (6ca6aac), /home/user/ref/sys-autopilot-1.5.0.
+- **r5** = sysmodule 0.3.0, `1cda5f7`. exefs.nsp 158,967 B, sha256
+  `b4f634a8cc94a3ab84b2d55021b9c3fd62af335fb4e4799b67341750102ccc13`, `check_nsp` ok. It adds an IP-change
+  listener rebuild, PSC sleep/wake and default socket sizes (DESIGN.md §11, attribution in `docs/PROVENANCE.md`).
+  - Job `card-jobs/r5-sysmodule-1cda5f7`: exefs replaced; toolbox and boot2.flag stay `unchanged` if present.
+  - Dry run on a copy of r3's files: OK.
+- **Fallback** = sys-autopilot from `6ca6aac`, built by `tools/build_autopilot.ps1` (Yoga).
+  - `sys-autopilot.nsp` 238,539 B, sha256 `ea5dfc674f7eb528f331f14a6d6c423358aa15493d8b481f4c1732044e71ff68`.
+  - Job `card-jobs/fallback-autopilot-6ca6aac`:
+    - exefs.nsp;
+    - our toolbox.json (118 B, `ba5797d8…`, requires_reboot false);
+    - `config/sys-autopilot/config.ini` (1,081 B, our token, `log = true`, 0600);
+    - NO boot2.flag.
+  - Dry run OK.
+- **Backstop job** `card-jobs/cleanup-autopilot-boot2`: a `remove.txt` for sys-autopilot's boot2.flag. It has
+  no order.txt, so it is refused until the primary orders it.
+- **Host:**
+  - `tools/host/autopilot.py` (`autopilot://`, `--backend autopilot`): host-side leases, refuses `two_drivers`
+    while port 47130 answers, HOME/CAPTURE refused, `macro.*`/`switch.*` unsupported.
+  - `discover.py --backend autopilot`; `smoke.py --backend autopilot fallback-check`.
+  - `own_install.py`: autopilot allowlist plus a receipted `remove.txt`.
+  - The runner patch routes `autopilot://` too.
+- **Switch-over** (DESIGN.md §11, from ovl-sysmodules `gui_main.cpp:75-114`):
+  - A on a running module kills it and deletes its flag; A on a stopped one starts it and creates the flag; Y
+    only toggles the flag.
+  - So: stop ours with `switch_remote.py shutdown` (not A); start sys-autopilot with A, then **Y once**.
+- **Resume** (`tools/host/resume_smoke.ps1`):
+  1. `-Phase card` (UMS/DBI): r3 logs and both flags listings read-only, then the r5 job and the fallback job.
+  2. The operator reboots.
+  3. `-Phase smoke`: 2 min for r5.
+  4. If r5 isn't there: the operator does A + Y on sys-autopilot, then `-Phase fallback`.
 
 ## Hardware smoke plan (in order)
 
@@ -80,13 +119,13 @@ Use sys-autopilot 1.5.0 (release zip sha256 a409ee7d…, exefs b132156a…, id 4
 
 ## Next commands
 
-1. Eden proof of the NRO (Yoga; ledger claim). Boot with the diag NRO and `ultimate/switch-remote/config.txt`
-   (`token`, `port`), and run the loopback build on the Yoga at that port, so the NRO's scene reports reach
-   the real Service. Walk title → main → Training → Online menu with library segments, and check the
-   install line `mode_reader=ok`, the mode words, and the gate (`allowed` offline, `online_mode` online).
-2. `CARD INSTALL REQUEST` to the primary (NRO + sysmodule + config, with sha256), then END.
-3. After the install: the hardware smoke (preflight; LAUNCH receipts; one capture; menus → Training and back;
-   the HDLS timing measurement against capture frames; disconnect).
+1. When the operator is back: post the CARD INSTALL REQUEST table (r5 job + fallback job, with sha256) to the
+   primary's INBOX, then END and wait for the order.
+2. On the order, with the console in UMS or DBI MTP:
+   `/usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase card`.
+3. The operator reboots. Then `... resume_smoke.ps1 -Phase smoke`. If it exits 2, the operator does A then Y on
+   "sys-autopilot (switch-remote fallback)" in ovlSysmodules, then `... -Phase fallback`.
+4. Then the hardware smoke plan above. The local-wireless step needs an Eden ldn_mitm peer (pending).
 
 ## Checklist (playbook `docs/CHECKLIST.md`)
 

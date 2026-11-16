@@ -45,11 +45,15 @@ tools/host/capd.py serve                             # capture fallback when OBS
 tools/host/switch_remote.py --host 172.30.254.92 status
 tools/host/switch_remote.py --host 172.30.254.92 shot now.png
 tools/host/switch_test.py run eden/rows.json --host 172.30.254.92 --mirror diag_log=ultimate:<plugin>/events.log
+tools/host/switch_remote.py --backend autopilot --host 172.30.254.92 status   # the sys-autopilot fallback
 ```
 
 Protocol: `docs/PROTOCOL.md`. Restrictions: `docs/RESTRICTIONS.md`.
 
 ## License
 
-MIT (`LICENSE`). No code is copied from GPL projects that were studied (sys-botbase, ldn_mitm, Atmosphere,
-ns2bench); libnx (ISC) is linked.
+MIT (`LICENSE`). No code is copied from the projects that were studied (sys-autopilot, sys-botbase, ldn_mitm,
+ovl-sysmodules, Atmosphere, ns2bench). libnx (ISC) is linked. Details and attributions: `docs/PROVENANCE.md`.
+
+The sys-autopilot fallback driver (`tools/host/autopilot.py`, DESIGN.md §11) is built from its pinned source for
+internal use and is not redistributed.

@@ -15,6 +15,10 @@ NRO = 'atmosphere/contents/01006A800016E000/romfs/skyline/plugins/libssbu_switch
 NSP = 'atmosphere/contents/4200000000005352/exefs.nsp'
 OTHER = 'atmosphere/contents/01006A800016E000/romfs/skyline/plugins/libtraining_rooms.nro'
 CONFIG = 'ultimate/switch-remote/config.txt'
+AP_NSP = 'atmosphere/contents/4200000000004150/exefs.nsp'
+AP_TOOLBOX = 'atmosphere/contents/4200000000004150/toolbox.json'
+AP_FLAG = 'atmosphere/contents/4200000000004150/flags/boot2.flag'
+AP_INI = 'config/sys-autopilot/config.ini'
 
 
 class Card(unittest.TestCase):
@@ -32,6 +36,7 @@ class Card(unittest.TestCase):
 
     def job(self, name, files, order='primary ruling 2026-11-15 22:3xZ'):
         j = self.tmp / name
+        j.mkdir()
         for rel, data in files.items():
             (j / 'sd' / rel).parent.mkdir(parents=True, exist_ok=True)
             (j / 'sd' / rel).write_bytes(data)
@@ -87,6 +92,51 @@ class Card(unittest.TestCase):
     def test_install_needs_preflight(self):
         with self.assertRaises(SystemExit):
             self.run_tool('install', str(self.job('nopre', {NRO: b'x'})))
+
+    def test_autopilot_fallback_files_allowed_but_not_its_boot2_flag(self):
+        j = self.job('ap', {AP_NSP: b'autopilot', AP_TOOLBOX: b'{}', AP_INI: b'token = secretsecretsecret\n'})
+        self.run_tool('preflight', str(j))
+        self.assertEqual(self.run_tool('install', str(j)), 0)
+        r = json.loads((j / 'install-receipt.json').read_text())
+        self.assertTrue(r['ok'])
+        self.assertNotIn('secretsecret', json.dumps(r) + (j / 'INSTALL.md').read_text())
+        with self.assertRaises(SystemExit) as cm:
+            self.run_tool('preflight', str(self.job('apflag', {AP_FLAG: b''})))
+        self.assertIn('not switch-remote files', str(cm.exception))
+
+    def test_remove_list_deletes_only_allowlisted_files_with_receipts(self):
+        (self.card / AP_FLAG).parent.mkdir(parents=True)
+        (self.card / AP_FLAG).write_bytes(b'')
+        (self.card / NRO).parent.mkdir(parents=True, exist_ok=True)
+        (self.card / NRO).write_bytes(b'nro old')
+        j = self.job('rm', {})
+        (j / 'remove.txt').write_text(f'# after an ovlSysmodules start\n{AP_FLAG}\n{NRO}\n{AP_TOOLBOX}\n')
+        self.run_tool('preflight', str(j))
+        self.assertEqual(self.run_tool('install', str(j)), 0)
+        r = json.loads((j / 'install-receipt.json').read_text())
+        self.assertTrue(r['ok'])
+        rows = {f['dest']: f for f in r['files']}
+        self.assertEqual(rows[AP_FLAG]['action'], 'removed')
+        self.assertNotIn('rollback_copy', rows[AP_FLAG])
+        self.assertEqual(rows[AP_TOOLBOX]['action'], 'already_absent')
+        self.assertEqual((self.card / rows[NRO]['rollback_copy']).read_bytes(), b'nro old')
+        self.assertEqual((j / 'before' / NRO).read_bytes(), b'nro old')
+        self.assertFalse((self.card / AP_FLAG).exists())
+        self.assertFalse((self.card / NRO).exists())
+        self.assertEqual((self.card / OTHER).read_bytes(), b'other plugin')
+
+    def test_remove_refuses_other_files_and_conflicts(self):
+        j = self.job('rmbad', {})
+        (j / 'remove.txt').write_text(OTHER + '\n')
+        with self.assertRaises(SystemExit) as cm:
+            self.run_tool('preflight', str(j))
+        self.assertIn('not removable', str(cm.exception))
+        j2 = self.job('rmboth', {NRO: b'x'})
+        (j2 / 'remove.txt').write_text(NRO + '\n')
+        with self.assertRaises(SystemExit) as cm:
+            self.run_tool('preflight', str(j2))
+        self.assertIn('both written and removed', str(cm.exception))
+        self.assertEqual((self.card / OTHER).read_bytes(), b'other plugin')
 
     def test_missing_card_is_reported(self):
         with self.assertRaises(SystemExit) as cm:

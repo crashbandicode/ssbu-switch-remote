@@ -268,12 +268,14 @@ stays host-tested.
 - **Boot.**
   - boot2 aborts boot on OutOfResource/OutOfMemory/LimitReached for SD sysmodules (AMS
     `boot2_api.board.nintendo_nx.cpp:152-155`).
-  - Image: 1.38 MiB including a static 1 MiB heap (ELF LOAD segments of build `39ebc14`); two 16 KiB stacks;
-    about 160 KiB of socket transfer memory. sys-botbase uses a 4.5 MiB heap.
-  - No service is touched for 10 s after start, nothing calls `fatalThrow`, and failures are logged while the
-    module idles.
+  - Image (r5, `1cda5f7`): 2.40 MiB including a static 2 MiB heap; 64 KiB main and 32 KiB pad stacks; 296 KiB
+    of socket transfer memory (Nintendo-default sizes, §11). sys-botbase uses a 4.5 MiB heap.
+  - Since r4 the SD and a breadcrumb come first, every stage and service call is logged before and after, the
+    boot delay applies only within 60 s of console boot, nothing calls `fatalThrow`, and init failures retry with
+    a backoff instead of idling (`docs/SMOKE-01-REVIEW.md`).
   - **Recovery:** delete `atmosphere/contents/4200000000005352/` (or its `flags/boot2.flag`) in hekate UMS.
-- **Permissions.** `fsp-srv set:sys hid:dbg bsd:u pm:dmnt pm:info pm:shell ns:dev ns:am2 pgl`; no debug syscalls.
+- **Permissions.** `fsp-srv set:sys hid:dbg bsd:u pm:dmnt pm:info pm:shell ns:dev ns:am2 pgl nifm:u psc:m`; no
+  debug syscalls.
 - **Input.** Fail closed (§2). HOME/A only through the fixed LAUNCH/DISMISS sequences (§3).
 - **Exposure.** Off by default; token; private peers; one client.
 - **NRO.** No hooks, one thread on a static stack, one install line; the diag build logs mode changes.
@@ -283,9 +285,74 @@ stays host-tested.
 | Gate | Where | Result |
 | --- | --- | --- |
 | NRO: cargo test / clippy -D warnings / no-default-features / skyline release / diag | Yoga, `remote-gate.ps1`, `e2e802a` (the NRO source is unchanged since) | 21/0, 0, 0, 36,864 B, 36,864 B |
-| Sysmodule: devkitA64 r30 + libnx 4.12.0, `-Wall -Wextra -Werror` | Yoga, `tools/build_sysmodule.ps1`, `39ebc14` | exefs.nsp 142,484 B, 0 warnings |
-| Sysmodule core | host g++ | 159 checks, 0 failures |
-| Host (client vs loopback Service, capture, OBS fake, GIF, runner patch) | ubuntu-surface | 40 tests OK |
+| Sysmodule: devkitA64 r30 + libnx 4.12.0, `-Wall -Wextra -Werror` | Yoga, `tools/build_sysmodule.ps1`, `1cda5f7` (r5) | exefs.nsp 158,967 B (sha256 `b4f634a8…`), 0 warnings, `check_nsp` ok |
+| Sysmodule core | host g++ | 239 checks, 0 failures |
+| Host (client vs loopback Service, sys-autopilot fake, capture, OBS fake, GIF, runner patch) | ubuntu-surface | 61 tests OK |
+| Card receipt tool (UMS and MTP via gio, incl. allowlisted removals) | ubuntu-surface | 16 tests OK |
+| sys-autopilot fallback build | Yoga, `tools/build_autopilot.ps1`, source `6ca6aac` | sys-autopilot.nsp 238,539 B (sha256 `ea5dfc67…`), `check_nsp` ok |
+
+## 11. r5 and the sys-autopilot fallback (primary ruling 2026-11-16)
+
+**r5 (sysmodule 0.3.0, `1cda5f7`, built, not installed).** It is r4 plus three changes. The techniques were
+re-implemented after studying sys-autopilot (TooTallNate) `source/common/server.c`, `power.c` and `main.c`; no
+code was copied (`docs/PROVENANCE.md`).
+- **Network changes.** nifm's IP is read every 2 s. On ANY change, including none→IP, the listeners and
+  connections close and are rebuilt (`sr::IpWatch`, `kIpPollMs`). A listener bound before DHCP, or across a
+  network teardown, can silently stop accepting; that is the probable root cause of Smoke 01.
+- **Sleep and wake (psc:m).** On ReadySleep, ReadySleepCritical or ReadyShutdown:
+  - sockets close;
+  - held input is released;
+  - the HDLS device detaches and its work buffer is released;
+  - log and status writes stop (no fsp/bsd IPC);
+  - then it acknowledges.
+  On wake it acknowledges, and on Awake it reopens. A private PSC module id (0x5352) with Fs as a dependency.
+- **Socket sizes.** Nintendo's default UDP buffers (0x2400/0xA500) and fixed TCP buffers (0x8000/0x10000), 4
+  sessions, the 2 MiB heap.
+
+**Fallback driver.** sys-autopilot 1.5.x, built from pinned source `6ca6aac` for internal use and not
+redistributed. Its license situation: no LICENSE file, `package.json` says MIT, and GitHub reports none.
+- **Install.** Staged at program id `4200000000004150` with our own `toolbox.json` (`requires_reboot: false`),
+  so ovlSysmodules lists it. `config/sys-autopilot/config.ini` carries our token and `log = true`.
+- **No `boot2.flag`.** Its `__appInit` diagAborts on any init failure, which would be a fatal at boot. It is
+  started by hand only.
+- **Host backend: `tools/host/autopilot.py`** (`autopilot://HOST[:4150]`, `--backend autopilot`).
+  - Input, status and capture only. Taps map to `/input/tap`.
+  - press/release map to `/input/hold` and `/input/release` with a HOST-side lease (sys-autopilot has none).
+    Sticks are re-centred by a lease.
+  - reset maps to `/input/clear`. HOME/CAPTURE are refused.
+  - `macro.*` and `switch.*` are refused `unsupported`: no frame-timed macros, no launch, terminate or files
+    through this path.
+  - **No online gate.** The console is LAN-only (§6a). The fallback serves the hardware smoke, and launching the
+    game stays with the operator in this mode.
+
+**One virtual controller at a time: the switch-over.**
+How ovlSysmodules (`gui_main.cpp:75-114`) handles the flag:
+- A on a running module kills it AND deletes its `flags/boot2.flag` (`:84-88`).
+- A on a stopped module launches it AND creates the flag (`:96-100`).
+- Y only toggles the flag (`:105-112`).
+
+The switch-over:
+1. Stop ours.
+   - If it listens: `switch_remote.py shutdown`. It releases input, detaches and exits, and keeps its boot2 flag.
+   - Avoid A on "switch-remote": that would also delete our autostart flag. If it was used, press Y once to
+     restore the flag.
+   - If ours never listened, it holds no controller and can stay.
+2. In ovlSysmodules, press A on "sys-autopilot (switch-remote fallback)" to start it, then press **Y once** to
+   delete the boot2 flag that A just created (it must never autostart).
+3. Drive it through `autopilot://`. The client refuses input (`two_drivers`) while our port 47130 answers.
+4. Back: press A on sys-autopilot (it stops and deletes its flag again if present), then start ours with
+   `switch_remote.py restart` if it is still running, or A on "switch-remote" (A creates our flag, which is wanted).
+
+Backstop: if sys-autopilot's flag is still there at the next card session (`-Phase card` lists both flags
+folders), the staged cleanup job `card-jobs/cleanup-autopilot-boot2` removes it with receipts (own_install
+`remove.txt`).
+
+**Resume plan** (`tools/host/resume_smoke.ps1`):
+1. `-Phase card`: read r3's logs read-only, then install the r5 job (with boot2) and the fallback job (no boot2).
+2. The operator reboots.
+3. `-Phase smoke`: r5 must listen within 2 min.
+4. If it doesn't, the operator starts sys-autopilot, then `-Phase fallback` (discovery on 4150 and
+   `smoke.py --backend autopilot fallback-check`).
 
 ## Requirement trace
 
@@ -303,6 +370,7 @@ stays host-tested.
 | "OBS may still be better for the photo/gif part" | OBS primary when it runs (stills, record, replay buffer); capd fallback | `test_finds_the_card_source_and_screenshots`, `test_record_and_replay`, `test_pick_backend_prefers_obs_then_falls_back` |
 | "we want it to be compatible with the sysmmodule plugin so we don't have to reboot forchanges" | requires_reboot false; hard-kill-safe lifecycle; PUT with receipts for own files; RESTART self-relaunch | `test_restart_reconnects_to_a_fresh_instance`, `test_put_updates_own_file_with_backup_and_receipt`, `test_shutdown_detaches_and_exits`, `test_start_sweeps_interrupted_put_stage` |
 | "online testing should still be possible over local wireless lobby. Those paths should be shared with nso path" | gate allows the local-wireless family, refuses NSO, fails closed when ambiguous; one report path for both; smoke over a local-wireless lobby | `test_local_wireless_lobby_allows_input_nso_refuses`, `test_online_scene_refuses` |
+| "if it works we could just use it instead to drive the hardware tests" (sys-autopilot; ruled: r5 + fallback) | r5 adopts its IP-change rebuild and PSC handling (re-implemented); sys-autopilot staged as a hand-started fallback with an `autopilot://` backend; one controller at a time | `ip_watch_rebuilds_on_any_change`, `test_press_is_released_by_the_host_lease`, `test_refuses_input_while_our_sysmodule_listens`, `test_smoke_fallback_check`, `test_remove_list_deletes_only_allowlisted_files_with_receipts` |
 
 ## Open points
 
