@@ -353,10 +353,37 @@ def job_removals(job):
     return rels
 
 
+PLUGINS = 'atmosphere/contents/01006A800016E000/romfs/skyline/plugins/'
+
+
+def job_authorized(job):
+    """Another project's file, written by this tool only under an explicit authorization (`authorized.json`:
+    [{"dest", "sha256", "bytes", "authorization", "source"}]): the destination must be a plugin NRO (inside the watched
+    plugins folder, so the before/after table covers it) and the staged file must match sha256 and size exactly."""
+    path = Path(job) / 'authorized.json'
+    if not path.exists():
+        return {}
+    out = {}
+    for e in json.loads(path.read_text()):
+        dest = e['dest']
+        if not (dest.startswith(PLUGINS) and dest.endswith('.nro') and '/' not in dest[len(PLUGINS):]):
+            raise SystemExit(f'refused: authorized destination is not a plugin NRO: {dest}')
+        if not e.get('authorization') or len(e.get('sha256', '')) != 64:
+            raise SystemExit(f'refused: authorization entry incomplete for {dest}')
+        out[dest] = e
+    return out
+
+
 def job_files(job):
     sd = Path(job) / 'sd'
     files = sorted(str(p.relative_to(sd)) for p in sd.rglob('*') if p.is_file()) if sd.exists() else []
-    bad = [f for f in files if f not in ALLOWED]
+    auth = job_authorized(job)
+    for f in files:
+        if f in auth:
+            data = (sd / f).read_bytes()
+            if sha(data) != auth[f]['sha256'] or len(data) != int(auth[f]['bytes']):
+                raise SystemExit(f'refused: {f} does not match its authorization (sha256/bytes)')
+    bad = [f for f in files if f not in ALLOWED and f not in auth]
     if bad:
         raise SystemExit(f'refused: not switch-remote files: {bad}')
     if not files and not job_removals(job):
@@ -411,6 +438,9 @@ def install(job, card, kind):
     pre_path = Path(job) / 'preflight-receipt.json'
     if not pre_path.exists():
         raise SystemExit('refused: run preflight first')
+    if job_authorized(job) and not (Path(job) / 'go.txt').exists():
+        raise SystemExit('refused: this job writes another project\'s file: go.txt (the explicit OK after the posted '
+                         'before table) is missing')
     pre = json.loads(pre_path.read_text())
     new = job_files(job)
     before = pre['_before_raw']

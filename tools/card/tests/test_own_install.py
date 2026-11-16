@@ -148,6 +148,46 @@ class Card(unittest.TestCase):
         self.assertIn('both written and removed', str(cm.exception))
         self.assertEqual((self.card / OTHER).read_bytes(), b'other plugin')
 
+    def test_another_projects_plugin_only_with_authorization_and_go(self):
+        deluxe = 'atmosphere/contents/01006A800016E000/romfs/skyline/plugins/libssbu_online_deluxe_rewrite.nro'
+        (self.card / deluxe).write_bytes(b'deluxe 0.10.7')
+        new = b'deluxe 0.10.8'
+        j = self.job('g1', {deluxe: new})
+        with self.assertRaises(SystemExit) as cm:
+            self.run_tool('preflight', str(j))
+        self.assertIn('not switch-remote files', str(cm.exception))
+        auth = [{'dest': deluxe, 'sha256': oi.sha(new), 'bytes': len(new), 'authorization': 'operator OK (test)',
+                 'source': 'test'}]
+        (j / 'authorized.json').write_text(json.dumps(auth))
+        self.run_tool('preflight', str(j))
+        with self.assertRaises(SystemExit) as cm:
+            self.run_tool('install', str(j))
+        self.assertIn('go.txt', str(cm.exception))
+        self.assertEqual((self.card / deluxe).read_bytes(), b'deluxe 0.10.7')  # nothing written without go
+        (j / 'go.txt').write_text('primary OK (test)')
+        self.assertEqual(self.run_tool('install', str(j)), 0)
+        r = json.loads((j / 'install-receipt.json').read_text())
+        row = r['files'][0]
+        self.assertEqual((row['action'], row['readback_ok'], r['other_files_changed']), ('replaced', True, []))
+        self.assertEqual((self.card / row['rollback_copy']).read_bytes(), b'deluxe 0.10.7')
+        self.assertEqual((j / 'before' / deluxe).read_bytes(), b'deluxe 0.10.7')
+        self.assertEqual((self.card / OTHER).read_bytes(), b'other plugin')
+
+    def test_authorization_is_exact(self):
+        deluxe = 'atmosphere/contents/01006A800016E000/romfs/skyline/plugins/libssbu_online_deluxe_rewrite.nro'
+        j = self.job('g2', {deluxe: b'tampered'})
+        (j / 'authorized.json').write_text(json.dumps([{'dest': deluxe, 'sha256': oi.sha(b'expected'), 'bytes': 8,
+                                                        'authorization': 'x', 'source': 'x'}]))
+        with self.assertRaises(SystemExit) as cm:
+            self.run_tool('preflight', str(j))
+        self.assertIn('does not match its authorization', str(cm.exception))
+        j3 = self.job('g3', {'atmosphere/config/system_settings.ini': b'x'})
+        (j3 / 'authorized.json').write_text(json.dumps([{'dest': 'atmosphere/config/system_settings.ini',
+                                                         'sha256': oi.sha(b'x'), 'bytes': 1, 'authorization': 'x'}]))
+        with self.assertRaises(SystemExit) as cm:
+            self.run_tool('preflight', str(j3))
+        self.assertIn('not a plugin NRO', str(cm.exception))
+
     def test_missing_card_is_reported(self):
         with self.assertRaises(SystemExit) as cm:
             oi.transport(self.transport, str(self.tmp / 'nope') if self.transport == 'ums'
