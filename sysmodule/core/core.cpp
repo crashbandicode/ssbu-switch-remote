@@ -366,8 +366,9 @@ const char* parse_config(std::string_view text, Config& c) {
             if (value == "on") c.inject = true;
             else if (value == "off") c.inject = false;
             else return "bad_inject";
-        } else if (key == "bind" || key == "npad") {
-            // NRO keys (in-game fallback input path); ignored here.
+        } else if (key == "bind" || key == "npad" || key == "scene_host") {
+            // NRO keys (in-game fallback input path; scene_host = where the NRO reports, option d); ignored here,
+            // so the parked sysmodule still starts with an option-(d) config.txt.
         } else {
             return "unknown_key";
         }

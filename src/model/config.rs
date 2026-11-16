@@ -8,11 +8,14 @@
 //! npad=auto                          auto | no1 | handheld
 //! peers=private                      private | loopback | <a.b.c.d/len> inside a private range
 //! inject=on                          the sysmodule's switch for the virtual controller
+//! scene_host=127.0.0.1               where the scene reports go (port+1): 127.0.0.1 = the sysmodule;
+//!                                    the host's LAN address = the host scene receiver (option d)
 //! ```
 
 pub const TOKEN_MIN: usize = 16;
 pub const TOKEN_MAX: usize = 64;
 pub const DEFAULT_PORT: u16 = 47130;
+pub const LOOPBACK: u32 = 0x7f00_0001;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Npad {
@@ -77,6 +80,8 @@ pub struct Config {
     pub bind: u32,
     pub npad: Npad,
     pub peers: Peers,
+    /// Host-order IPv4 of the scene receiver (loopback or a private LAN address).
+    pub scene_host: u32,
 }
 
 impl Config {
@@ -93,6 +98,7 @@ pub enum ConfigError {
     BadBind,
     BadNpad,
     BadPeers,
+    BadSceneHost,
     UnknownKey,
 }
 
@@ -105,6 +111,7 @@ impl ConfigError {
             ConfigError::BadBind => "bad_bind",
             ConfigError::BadNpad => "bad_npad",
             ConfigError::BadPeers => "bad_peers",
+            ConfigError::BadSceneHost => "bad_scene_host",
             ConfigError::UnknownKey => "unknown_key",
         }
     }
@@ -143,6 +150,7 @@ pub fn parse(text: &[u8]) -> Result<Config, ConfigError> {
         bind: 0,
         npad: Npad::Auto,
         peers: Peers::Private,
+        scene_host: LOOPBACK,
     };
     for raw in text.split(|c| *c == b'\n') {
         let line = trim(raw);
@@ -197,6 +205,14 @@ pub fn parse(text: &[u8]) -> Result<Config, ConfigError> {
                     }
                 }
             }
+            b"scene_host" => {
+                // LAN only: the reports never leave the private ranges (operator, 2026-11-15).
+                let ip = parse_ipv4(value).ok_or(ConfigError::BadSceneHost)?;
+                if !Peers::Private.allows(ip) {
+                    return Err(ConfigError::BadSceneHost);
+                }
+                cfg.scene_host = ip;
+            }
             // The sysmodule's key (sysmodule/core/core.cpp parse_config); nothing to do in the game.
             b"inject" if value == b"on" || value == b"off" => {}
             _ => return Err(ConfigError::UnknownKey),
@@ -226,6 +242,19 @@ mod tests {
         assert_eq!(c.bind, 0);
         assert_eq!(c.npad, Npad::Auto);
         assert_eq!(c.peers, Peers::Private);
+        assert_eq!(c.scene_host, LOOPBACK);
+    }
+
+    #[test]
+    fn scene_host_is_private_only() {
+        let c = parse(b"token=abcdefghijklmnop\nscene_host=172.30.254.66\n").unwrap();
+        assert_eq!(c.scene_host, 0xac1efe42);
+        assert_eq!(parse(b"token=abcdefghijklmnop\nscene_host=127.0.0.1").unwrap().scene_host, LOOPBACK);
+        for bad in [&b"8.8.8.8"[..], b"0.0.0.0", b"192.168.0", b"device-1.invalid", b""] {
+            let mut text = b"token=abcdefghijklmnop\nscene_host=".to_vec();
+            text.extend_from_slice(bad);
+            assert_eq!(parse(&text), Err(ConfigError::BadSceneHost), "{:?}", core::str::from_utf8(bad));
+        }
     }
 
     #[test]

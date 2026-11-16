@@ -161,6 +161,8 @@ static void config_requires_token() {
     STREQ(parse_config("token=abcdefghijklmnop\nport=80", c), "bad_port");
     STREQ(parse_config("token=abcdefghijklmnop\npeers=8.8.8.0/24", c), "bad_peers");
     STREQ(parse_config("token=abcdefghijklmnop\ncolour=red", c), "unknown_key");
+    // Option (d): the NRO's scene_host key must not stop the parked sysmodule from starting.
+    STREQ(parse_config("token=abcdefghijklmnop\nscene_host=172.30.254.66\n", c), nullptr);
 }
 
 static void peers_are_private_only() {

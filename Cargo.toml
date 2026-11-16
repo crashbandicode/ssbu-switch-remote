@@ -1,6 +1,6 @@
 [package]
 name = "ssbu-switch-remote"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 publish = false
 description = "Skyline plugin for Super Smash Bros. Ultimate 13.0.5 that reports the game's scene (offline or online) to the switch-remote sysmodule, so remote input stays off online"

@@ -62,7 +62,7 @@
       "source": "diag_log",
       "whole_file": true,
       "cap": 120,
-      "pattern": "plugin=switch-remote/0\\.1\\.0 mode_reader=ok config=ok port=47230 result=installed heap_allocations=\\d+"
+      "pattern": "plugin=switch-remote/0\\.2\\.0 mode_reader=ok config=ok port=47230 scene_host=127\\.0\\.0\\.1 result=installed heap_allocations=\\d+"
     },
     "sr-channel": {
       "kind": "log",

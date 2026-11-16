@@ -153,7 +153,8 @@ fn read_config(report: &mut LineBuf<384>) -> Option<config::Config> {
     }
     match config::parse(&buf[..read as usize]) {
         Ok(c) => {
-            let _ = write!(report, " config=ok port={}", c.port);
+            let h = c.scene_host;
+            let _ = write!(report, " config=ok port={} scene_host={}.{}.{}.{}", c.port, h >> 24, (h >> 16) & 255, (h >> 8) & 255, h & 255);
             Some(c)
         }
         Err(e) => {
@@ -201,7 +202,7 @@ fn connect_scene(cfg: &config::Config) -> Option<i32> {
             len: 16,
             family: sock::AF_INET as u8,
             port_be: scene::scene_port(cfg.port).to_be(),
-            addr_be: 0x7f00_0001u32.to_be(),
+            addr_be: cfg.scene_host.to_be(),
             zero: [0; 8],
         };
         if sock::connect(fd, &addr, 16) != 0 {
