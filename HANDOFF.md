@@ -57,6 +57,11 @@ The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive 
   timed-row Eden; the Surface is excluded. A ruling was requested (Eden slot first, or card install now).
 - Watcher: `/tmp/switch-remote-watcher-81d86844.ps1`, re-armed on each resume (owner = the claude pid).
 
+## Smoke 01 (2026-11-16 01:30Z): BLOCKED, parked
+
+The sysmodule was not listening (console at HOME, IP 172.30.254.53). Static review: `docs/SMOKE-01-REVIEW.md`. r4 (sysmodule 0.2.0, `9d8a027`, exefs.nsp 155,057 B, sha256 `e0365531ac293f626d96ece2540a37e3a7157d9826a507080b6587af3b6a7393`) is built and self-diagnosing. It is NOT installed; its job is `/home/user/ssbu-switch-remote-work/card-jobs/r4-sysmodule-9d8a027`. Resume:
+`tools/host/resume_smoke.ps1 -Phase card` (UMS or DBI: old logs read-only, then the r4 install), the operator reboots, then `-Phase smoke`.
+
 ## Hardware smoke plan (in order)
 
 1. Discovery finds the console; `smoke.py preflight` (status, capture, records, crash listing).
