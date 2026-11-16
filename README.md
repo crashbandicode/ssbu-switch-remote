@@ -1,10 +1,11 @@
 # switch-remote
 
 Drive a physical Nintendo Switch running Super Smash Bros. Ultimate 13.0.5 the way test agents drive the
-Eden emulator. [sys-autopilot](https://github.com/TooTallNate/sys-autopilot) 1.5.0 presents a virtual Pro
-Controller over the LAN. A small Skyline plugin reports to this host whether the game is offline, and the host
-client refuses remote input unless it is. The host also launches and terminates the game through image-checked
-HOME-menu sequences and reads crash logs. The HDMI capture card on the host provides the screenshots and clips,
+Eden emulator. An ESP32-S3 board (`firmware/`) plugged into the dock is a wired controller; the host drives it
+over the board's serial port, and macros play on the board's own 60 Hz clock (`usb://`, DESIGN.md §13). The host
+also launches and terminates the game through image-checked HOME-menu sequences. A small Skyline plugin reports the
+game's scene to this host (information on the wired route). [sys-autopilot](https://github.com/TooTallNate/sys-autopilot)
+1.5.0 is an optional extra for remote log reads (§12). The HDMI capture card on the host provides the screenshots and clips,
 through OBS when it runs and GStreamer otherwise. The playbook's Eden runner can target the console with
 `autopilot://HOST` (see `DESIGN.md` §12). This repository's own sysmodule (`sysmodule/`) is parked as the
 fallback (`switch://HOST:PORT`, §11).
@@ -38,6 +39,8 @@ cargo build --no-default-features
 cargo skyline build --release                      # the NRO
 make -C sysmodule test                             # sysmodule core + host loopback server (system g++)
 DEVKITPRO=/opt/devkitpro make -C sysmodule         # the sysmodule (devkitA64 + libnx)
+make -C firmware test                              # switch-pad core + pty simulator
+idf.py -C firmware set-target esp32s3 build        # the ESP32-S3 firmware (ESP-IDF v5.5.6; tools/build_pad.ps1)
 /usr/bin/python3 -I -m unittest discover -s tools/host/tests
 ```
 
@@ -51,6 +54,8 @@ tools/host/capd.py serve                             # capture fallback when OBS
 tools/host/switch_remote.py --host 172.30.254.92 status
 tools/host/switch_remote.py --host 172.30.254.92 shot now.png
 tools/host/switch_test.py run eden/rows.json --host 172.30.254.92 --mirror diag_log=ultimate:<plugin>/events.log
+tools/host/switch_remote.py --backend usb --host /dev/serial/by-id/<CH343> call switch.version   # the wired pad
+/usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase flash   # flash the board
 tools/host/scened.py serve &                                                # scene receiver + gate
 tools/host/switch_remote.py --backend autopilot --host 172.30.254.53 status   # the driver (option d)
 tools/host/switch_remote.py --backend autopilot --host 172.30.254.53 launch   # HOME -> image gate -> A

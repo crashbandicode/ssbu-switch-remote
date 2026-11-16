@@ -297,6 +297,9 @@ stays host-tested.
 | Sysmodule core | host g++ | 240 checks, 0 failures |
 | Host (autopilot driver vs a fake sys-autopilot, scene receiver over TCP, image gate, loopback Service, capture, OBS fake, GIF, runner patch) | ubuntu-surface | 94 tests OK |
 | Card receipt tool (UMS and MTP via gio, incl. allowlisted removals) | ubuntu-surface | 16 tests OK |
+| switch-pad firmware (ESP-IDF v5.5.6, esp_tinyusb 1.7.6~2, TinyUSB 0.21.0~6; our component `-Wall -Wextra -Werror`) | Yoga, `tools/build_pad.ps1`, `433f357` | 0 warnings; `switch_pad.bin` 234,928 B (sha256 `ab516cdb…`), bootloader `219e7ee1…`, partition table `7f00b6c0…` |
+| switch-pad core | host g++ (`make -C firmware test`) | 84 checks, 0 failures |
+| Host suite incl. `usb://` vs the pty simulator, flashing with a fake esptool | ubuntu-surface | 116 tests OK |
 | sys-autopilot build from source (reference only; the install uses the 1.5.0 release exefs) | Yoga, `tools/build_autopilot.ps1`, source `6ca6aac` | sys-autopilot.nsp 238,539 B (sha256 `ea5dfc67…`), `check_nsp` ok |
 
 ## 11. r5: PARKED fallback (built 2026-11-16, superseded by option d the same night)
@@ -452,7 +455,11 @@ the kit with camera and SD card): `C/C_Tutorial.pdf` p.145 "Difference between U
   - a udev rule giving the CH343 (1a86) `plugdev`, which the user is in;
   - or `usermod -aG dialout`.
 
-**Flashing.** `tools/flash_pad.ps1` runs esptool (a pinned venv on the host the board is plugged into) over the
+**Built and host-tested 2026-11-16** (details in §10): the firmware at `433f357`, 0 warnings; core 84 checks;
+the `usb://` client against the pty simulator, including device-clock macro timing within ±3 ms and the 1 s
+watchdog; flashing against a fake esptool.
+
+**Flashing.** `tools/host/flash_pad.py` (via `resume_smoke.ps1 -Phase flash`) runs esptool 4.13.0 (a pinned venv on the host the board is plugged into) over the
 UART port: `write_flash` of bootloader, partition table and app, with esptool's own hash verification. The receipt
 holds the firmware sha256s, the esptool output and the chip MAC.
 
@@ -478,7 +485,7 @@ holds the firmware sha256s, the esptool output and the chip MAC.
 | "OBS may still be better for the photo/gif part" | OBS primary when it runs (stills, record, replay buffer); capd fallback | `test_finds_the_card_source_and_screenshots`, `test_record_and_replay`, `test_pick_backend_prefers_obs_then_falls_back` |
 | "we want it to be compatible with the sysmmodule plugin so we don't have to reboot forchanges" | requires_reboot false; hard-kill-safe lifecycle; PUT with receipts for own files; RESTART self-relaunch | `test_restart_reconnects_to_a_fresh_instance`, `test_put_updates_own_file_with_backup_and_receipt`, `test_shutdown_detaches_and_exits`, `test_start_sweeps_interrupted_put_stage` |
 | "online testing should still be possible over local wireless lobby. Those paths should be shared with nso path" | gate allows the local-wireless family, refuses NSO, fails closed when ambiguous; one report path for both; smoke over a local-wireless lobby | `test_local_wireless_lobby_allows_input_nso_refuses`, `test_online_scene_refuses` |
-| "use [the ESP32-S3 board] to control the switch via USB so you don't send over network … then you wouldn't need the sysmmodule" | §13: HORI-identity wired pad on the OTG port, UART line protocol, device-timed macros, 1 s watchdog, `usb://` backend, esptool flashing with receipts | `firmware/core/tests` (report, timing, watchdog), `tools/host/tests/test_usbpad.py` |
+| "use [the ESP32-S3 board] to control the switch via USB so you don't send over network … then you wouldn't need the sysmmodule" | §13: HORI-identity wired pad on the OTG port, UART line protocol, device-timed macros, 1 s watchdog, `usb://` backend, esptool flashing with receipts | `report_layout_matches_the_hori_descriptor`, `macro_frames_follow_the_device_clock`, `watchdog_neutralizes_after_one_second_of_silence`, `test_device_timed_macro`, `test_keepalive_holds_a_long_press_and_silence_releases_it`, `test_launch_presses_home_then_a`, `test_flash_receipt` |
 | "if it works we could just use it instead to drive the hardware tests" (sys-autopilot; ADOPTED as option d) | sys-autopilot drives; host gate from the NRO's reports (`scened.py`); image-gated LAUNCH/TERMINATE; host-timed macros; logs over `/files`; r5 parked | `test_every_closed_verdict_refuses_input_without_a_request`, `test_watchdog_clears_held_input_when_the_gate_closes`, `test_verdicts_match_the_sysmodule_core`, `test_launch_when_no_report_and_home_first_tile`, `test_terminate_without_a_dialog_never_presses_a`, `test_cursor_on_slot_two_is_refused`, `test_option_d_install_then_a_later_boot2_session`, `scene_host_is_private_only` |
 
 ## Open points

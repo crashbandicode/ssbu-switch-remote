@@ -16,6 +16,10 @@
   (gated by scened.py), lan-check/online-check, terminate (HOME -> still -> X -> still -> A), bye, plus
   driver-check   status, a still, and one tap that must be REFUSED (no game reporting: no_scene_report)
 
+--backend usb --device /dev/serial/by-id/... (the ESP32-S3 wired pad, DESIGN.md 13; the primary input route) takes the
+same steps (launch/terminate/dismiss are still-checked button sequences; no gate), plus
+  pad-check      VERSION, STATUS usb_mounted=1 (the dock enumerated the pad) and a still
+
 Receipts: DIR/receipts.jsonl (one line per action: wall time, action, reply, screenshot). Screenshots: DIR/shots/.
 The token is read from SWITCH_REMOTE_TOKEN_FILE / ~/.config/switch-remote/token and never written anywhere.
 """
@@ -34,9 +38,12 @@ SSBU = '0x1006a800016e000'
 
 
 class Smoke:
-    def __init__(self, host, port, out, backend='switch'):
+    def __init__(self, host, port, out, backend='switch', device=None):
         log = str(Path(out) / 'switch-actions.jsonl')
-        if backend == 'autopilot':
+        if backend == 'usb':
+            import usbpad
+            self.c = usbpad.UsbClient(device, actions_log=log)
+        elif backend == 'autopilot':
             import autopilot
             self.c = autopilot.AutopilotClient(host, port or autopilot.AUTOPILOT_PORT, sr.read_token(), actions_log=log)
         else:
@@ -74,7 +81,7 @@ class Smoke:
 
     def scene(self, st):
         """(mode, gate, deluxe, age) from either backend's status."""
-        if self.backend == 'autopilot':
+        if self.backend in ('autopilot', 'usb'):
             sc = st.get('scene') or {}
             return sc.get('mode', '0x0'), st.get('gate'), sc.get('deluxe'), sc.get('age_ms')
         return st.get('scene_mode', '0x0'), st.get('gate'), st.get('scene_deluxe'), st.get('scene_age_ms')
@@ -89,7 +96,20 @@ class Smoke:
         self.receipt('crash_reports listing', {'ok': r.get('ok'), 'count': n, 'newest': newest}, shot=False)
         self.call('switch.list', {'root': 'ultimate', 'dir': 'switch-remote'}, shot=False)
 
+    def pad_check(self):
+        v = self.call('switch.version', shot=False)
+        st = self.call('status')
+        mounted = (st.get('result') or {}).get('usb_mounted') == '1'
+        return self.receipt('pad enumerated by the dock', {'ok': bool(v.get('ok')) and mounted, 'status': st},
+                            shot=False)
+
     def launch(self):
+        if self.backend == 'usb':
+            r = self.call('switch.launch')
+            if not r.get('ok'):
+                return r
+            time.sleep(15)  # boot to the title screen; the still shows it (the scene report, if any, is info)
+            return self.call('status')
         if self.backend == 'autopilot':
             r = self.call('switch.launch')
             if not r.get('ok'):
@@ -136,6 +156,8 @@ class Smoke:
     def terminate(self):
         before = {e['name'] for e in (self.c.request('switch.list', {'root': 'crash_reports'}).get('result') or [])}
         self.call('switch.terminate')
+        if self.backend == 'usb':
+            return self.receipt('terminated (button sequence)', {'ok': True}, shot=True)
         if self.backend == 'autopilot':
             self.wait_status('scene reports stopped', lambda s: not s.get('running'), 30)
         else:
@@ -166,9 +188,9 @@ class Smoke:
         return self.receipt('lease released', {'ok': not held.get('leases'), 'status': held}, shot=False)
 
     def bye(self):
-        if self.backend == 'autopilot':
+        if self.backend in ('autopilot', 'usb'):
             self.c.close()
-            return self.receipt('released (input.clear)', {'ok': True}, shot=False)
+            return self.receipt('released (input.clear / RESET)', {'ok': True}, shot=False)
         for m in ('input.reset', 'switch.detach'):
             self.call(m, shot=False)
         try:
@@ -181,14 +203,15 @@ class Smoke:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--host', required=True)
+    ap.add_argument('--host', default='')
+    ap.add_argument('--device', help='usb backend: the board\'s UART serial device')
     ap.add_argument('--port', type=int)
-    ap.add_argument('--backend', choices=['switch', 'autopilot'], default='switch')
+    ap.add_argument('--backend', choices=['switch', 'autopilot', 'usb'], default='switch')
     ap.add_argument('--out', required=True)
     ap.add_argument('cmd')
     ap.add_argument('args', nargs='*')
     a = ap.parse_args(argv)
-    s = Smoke(a.host, a.port, a.out, a.backend)
+    s = Smoke(a.host, a.port, a.out, a.backend, a.device)
     if a.cmd == 'preflight':
         s.preflight()
     elif a.cmd == 'launch':
@@ -212,10 +235,16 @@ def main(argv=None):
         s.driver_check()
     elif a.cmd == 'lease-check' and a.backend == 'autopilot':
         s.lease_check()
+    elif a.cmd == 'pad-check' and a.backend == 'usb':
+        s.pad_check()
+    elif a.cmd == 'dismiss':
+        s.call('switch.dismiss')
     else:
         ap.error(f'unknown command {a.cmd}')
-    if a.backend == 'autopilot':
-        s.c.wait_leases()  # never exit with a host-side lease pending
+    if a.backend in ('autopilot', 'usb'):
+        s.c.wait_leases()  # never exit with a host-side lease pending / a device macro mid-play
+    if a.backend == 'usb':
+        s.c.stop_keepalive()
     s.c.conn.close()
     return 0
 

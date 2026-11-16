@@ -1,7 +1,11 @@
 #requires -Version 7
 <#
-Resumes the parked hardware smoke under option (d) (primary ruling 2026-11-16: sys-autopilot 1.5.0 drives the
-console; our NRO reports scenes to this host; r5 is parked as the fallback).
+Resumes the parked hardware smoke. Input route (primary direction 2026-11-16 ~03:50Z, DESIGN.md 13): the ESP32-S3
+wired pad (OTG port -> dock, UART port -> this host). sys-autopilot is an OPTIONAL extra (logs/files; option d,
+DESIGN.md 12); r5 is parked.
+
+  /usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase flash   # board's UART port plugged in here
+  /usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase pad     # board in the dock, console on HOME
 
   /usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase card    # console in UMS or DBI MTP
   /usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase smoke   # after reboot + manual start
@@ -18,8 +22,11 @@ smoke: starts the scene receiver (user unit sr-scened, scened.py serve) if it is
 Never writes outside switch-remote's allowlist; never mounts or ejects anything.
 #>
 param(
-    [Parameter(Mandatory)][ValidateSet('card', 'smoke')][string]$Phase,
-    [string[]]$Jobs = @('/home/user/ssbu-switch-remote-work/card-jobs/d1-autopilot-1.5.0-nro-3d6e1bb'),
+    [Parameter(Mandatory)][ValidateSet('card', 'smoke', 'flash', 'pad')][string]$Phase,
+    # Required job; add .../e2-optional-autopilot-1.5.0 only if the optional sys-autopilot install is ordered.
+    [string[]]$Jobs = @('/home/user/ssbu-switch-remote-work/card-jobs/e1-pad-route-nro-3d6e1bb'),
+    [string]$Build = '/home/user/ssbu-switch-remote-work/pad/433f357',
+    [string]$Device = 'auto',
     [string]$Out = '/home/user/ssbu-switch-remote-work/smoke-02',
     [string]$Artifacts = '/home/user/smash-training-lobby/artifacts/switch-remote-card',
     [int]$WaitMin = 5
@@ -78,7 +85,44 @@ if ($Phase -eq 'card') {
             Say "$name installed and read back (receipts: $dest)"
         }
     } finally { Pop-Location }
-    Say 'Done. Ask the operator to: (1) leave UMS/DBI and REBOOT; (2) in ovlSysmodules press A on "sys-autopilot (switch-remote driver)" to start it, then press Y ONCE (A also creates its boot2.flag, which must wait for a later receipted session); (3) leave the console on the HOME menu with SSBU as the first tile. Then run -Phase smoke.'
+    $ap = $Jobs | Where-Object { $_ -like '*autopilot*' }
+    $start = if ($ap) { ' If the optional sys-autopilot was installed: in ovlSysmodules press A on "sys-autopilot (switch-remote driver)", then Y ONCE (A also creates its boot2.flag).' } else { '' }
+    Say "Done. Ask the operator to leave UMS/DBI and REBOOT, and leave the console on the HOME menu with SSBU as the first tile.$start Then -Phase flash (once) and -Phase pad."
+    exit 0
+}
+
+function Find-Pad {
+    if ($Device -ne 'auto') { return $Device }
+    $found = @(Get-ChildItem /dev/serial/by-id -ErrorAction SilentlyContinue | Where-Object Name -like '*1a86*')
+    if ($found.Count -ne 1) { throw "expected one CH343 (1a86) under /dev/serial/by-id, found $($found.Count): plug the board's UART port (beside BOOT/IO0) into this host" }
+    return $found[0].FullName
+}
+
+if ($Phase -eq 'flash') {
+    $dev = Find-Pad
+    $rcpt = "$Out/flash-$(Get-Date -AsUTC -Format 'yyyyMMddTHHmmssZ')"
+    Say "flashing $Build onto $dev"
+    & $py -I "$PSScriptRoot/flash_pad.py" --build $Build --out $rcpt --port $dev
+    $code = $LASTEXITCODE
+    $dest = Join-Path $Artifacts "flash-$(Split-Path $Build -Leaf)"
+    New-Item -ItemType Directory -Force $dest | Out-Null
+    Copy-Item "$rcpt/*" $dest
+    if ($code -ne 0) { Say "flash FAILED: see $rcpt/flash-receipt.json"; exit 2 }
+    Say "flashed and answering (receipt $dest). Plug the board's OTG port (beside EN/RST) into a dock USB port, then -Phase pad."
+    exit 0
+}
+
+if ($Phase -eq 'pad') {
+    $dev = Find-Pad
+    $unit = 'sr-scened'
+    if ((& systemctl --user is-active $unit 2>$null) -ne 'active') {
+        & systemd-run --user --unit $unit --collect -p MemoryMax=200M /usr/bin/python3 -I "$PSScriptRoot/scened.py" serve | Out-Null
+    }
+    $sm = @('-I', "$PSScriptRoot/smoke.py", '--backend', 'usb', '--device', $dev, '--out', $Out)
+    & $py @sm pad-check
+    & $py @sm preflight
+    & $py @sm launch
+    Say "automatic part done; review $Out/shots and receipts.jsonl, then by hand: smoke.py --backend usb --device $dev --out $Out play|step|stick|lan-check|terminate|dismiss|bye"
     exit 0
 }
 

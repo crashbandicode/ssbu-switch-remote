@@ -79,6 +79,9 @@ def parse_mirror(spec):
 
 
 def make(args, **kw):
+    if args.backend == 'usb':
+        import usbpad
+        return usbpad.UsbClient(args.device, capd_socket=args.capd, **kw)
     if args.backend == 'autopilot':
         import autopilot
         return autopilot.AutopilotClient(args.host, args.port or autopilot.AUTOPILOT_PORT,
@@ -87,8 +90,9 @@ def make(args, **kw):
 
 
 def instances_for(host, port, out, mirrors, backend='switch'):
-    scheme = 'autopilot' if backend == 'autopilot' else 'switch'
-    inst = {'socket': f'{scheme}://{host}:{port}', 'screenshot_target': 'switch-capture', 'backend': 'switch'}
+    scheme = {'autopilot': 'autopilot', 'usb': 'usb'}.get(backend, 'switch')
+    sock = f'usb://{host}' if backend == 'usb' else f'{scheme}://{host}:{port}'
+    inst = {'socket': sock, 'screenshot_target': 'switch-capture', 'backend': 'switch'}
     for key, root, path in mirrors:
         inst[key] = str(out / 'mirror' / f'{key}.log')
     return {'switch': inst}
@@ -112,7 +116,8 @@ def run(args):
     client = make(args, actions_log=str(out / 'switch-actions.jsonl'))
     port = args.port or (4150 if args.backend == 'autopilot' else sr.DEFAULT_PORT)
     inst_path = out / 'instances.json'
-    inst_path.write_text(json.dumps(instances_for(args.host, port, out, mirrors, args.backend), indent=1) + '\n')
+    target = args.device if args.backend == 'usb' else args.host
+    inst_path.write_text(json.dumps(instances_for(target, port, out, mirrors, args.backend), indent=1) + '\n')
     threads = [Mirror(client, root, path, out / 'mirror' / f'{key}.log') for key, root, path in mirrors]
     for t in threads:
         t.start()
@@ -125,7 +130,7 @@ def run(args):
         for t in threads:
             t.stop.set()
         if hasattr(client, 'close'):
-            client.close()  # autopilot: release everything (sys-autopilot has no lease of its own)
+            client.close()  # release everything (sys-autopilot has no lease; the pad stops its keep-alive)
         client.conn.close()
 
 
@@ -134,9 +139,10 @@ def main(argv=None):
     sub = ap.add_subparsers(dest='cmd', required=True)
     for name in ('preflight', 'run'):
         p = sub.add_parser(name)
-        p.add_argument('--host', required=True)
+        p.add_argument('--host', default='')
+        p.add_argument('--device', help='usb backend: the board\'s UART serial device')
         p.add_argument('--port', type=int)
-        p.add_argument('--backend', choices=['autopilot', 'switch'], default='autopilot')
+        p.add_argument('--backend', choices=['usb', 'autopilot', 'switch'], default='usb')
         p.add_argument('--token-file')
         p.add_argument('--capd', default=sr.DEFAULT_CAPD)
         if name == 'run':

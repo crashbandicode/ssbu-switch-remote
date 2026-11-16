@@ -528,14 +528,17 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--host', required=True)
     ap.add_argument('--port', type=int)
-    ap.add_argument('--backend', choices=['switch', 'autopilot'], default='switch',
-                    help='autopilot = the sys-autopilot fallback (input, status, capture only)')
+    ap.add_argument('--backend', choices=['switch', 'autopilot', 'usb'], default='switch',
+                    help='usb = the ESP32-S3 wired pad (--host is its serial device); autopilot = sys-autopilot')
     ap.add_argument('--token-file')
     ap.add_argument('--capd', default=DEFAULT_CAPD)
     ap.add_argument('cmd')
     ap.add_argument('args', nargs='*')
     a = ap.parse_args(argv)
-    if a.backend == 'autopilot':
+    if a.backend == 'usb':
+        import usbpad
+        c = usbpad.UsbClient(a.host, capd_socket=a.capd)
+    elif a.backend == 'autopilot':
         import autopilot
         c = autopilot.AutopilotClient(a.host, a.port or autopilot.AUTOPILOT_PORT, read_token(a.token_file),
                                       capd_socket=a.capd)

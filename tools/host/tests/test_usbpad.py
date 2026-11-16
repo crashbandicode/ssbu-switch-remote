@@ -208,6 +208,21 @@ class Sequences(Base):
         self.assertLess(x_, a)
 
 
+class SmokeAndRunner(Base):
+    def test_smoke_pad_check(self):
+        import smoke
+        s = smoke.Smoke.__new__(smoke.Smoke)
+        s.c, s.out, s.n, s.backend = self.c, self.tmp / 'smoke', 0, 'usb'
+        (s.out / 'shots').mkdir(parents=True)
+        r = s.pad_check()
+        self.assertTrue(r['ok'], r)
+
+    def test_switch_test_usb_instance(self):
+        import switch_test
+        inst = switch_test.instances_for('/dev/serial/by-id/x', 0, self.tmp, [], 'usb')
+        self.assertEqual(inst['switch']['socket'], 'usb:///dev/serial/by-id/x')
+
+
 class Files(Base):
     def test_logs_need_the_optional_sys_autopilot(self):
         self.assertEqual(self.c.request('switch.list', {'root': 'crash_reports'})['error']['code'], 'unsupported')

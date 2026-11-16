@@ -1,6 +1,6 @@
 # HANDOFF: switch-remote
 
-Updated 2026-11-16 03:36Z (CARD INSTALL REQUEST posted to the INBOX). Worker: switch-remote (Opus 5.5, high), session `81d86844-b65c-42b8-bf83-c7b6d7ba2c32`,
+Updated 2026-11-16 ~04:20Z (USB pad route built; END: waiting for the operator to plug the board in). Worker: switch-remote (Opus 5.5, high), session `81d86844-b65c-42b8-bf83-c7b6d7ba2c32`,
 spawned by the rc6-integration primary. Playbook followed: `ssbu-mod-playbook` `3332c0d`.
 
 ## Objective and scope
@@ -15,7 +15,10 @@ The goal is to remote-control the physical Switch (SSBU 13.0.5) as agents drive 
   - the `autopilot://` driver;
   - capture through OBS (primary) or capd.
 
-Our sysmodule (r5) is parked as the fallback. `DESIGN.md` (revision 4, §12) is the design.
+Our sysmodule (r5) is parked as the fallback. `DESIGN.md` (revision 5) is the design.
+
+**Since ~03:50Z the PRIMARY INPUT ROUTE is the USB wired pad (§13).** It is the operator's Freenove ESP32-S3 board:
+the OTG port goes to the dock, the UART port to the Surface. sys-autopilot is OPTIONAL (logs and files).
 
 ## Rulings received (2026-11-15)
 
@@ -91,7 +94,39 @@ Our sysmodule (r5) is parked as the fallback. `DESIGN.md` (revision 4, §12) is 
 The sysmodule was not listening (console at HOME, IP 172.30.254.53). Static review: `docs/SMOKE-01-REVIEW.md`.
 Probable root cause: the listener was bound before DHCP. r4 (`9d8a027`, self-diagnosing) is superseded by r5.
 
-## Option (d): staged, NOT installed (ruled 2026-11-16)
+## USB wired pad (primary direction 2026-11-16 ~03:50Z): built, host-tested, NOT flashed
+
+- **Firmware** `firmware/` (switch-pad 0.1.0), built on the Yoga with `tools/build_pad.ps1` at `433f357`
+  (ESP-IDF v5.5.6 in `~/build-hosts/toolchains`, esp_tinyusb 1.7.6~2, TinyUSB 0.21.0~6, 0 warnings).
+  - Output: `/home/user/ssbu-switch-remote-work/pad/433f357/`.
+  - `switch_pad.bin` 234,928 B, sha256 `ab516cdb44329812efa6e95dc55a7406f91f77f37fe5e25ecfc2a447aeafe755`.
+  - bootloader 13,632 B `219e7ee1…`; partition table 3,072 B `7f00b6c0…`.
+  - The ledger claim was released and the lane cleaned.
+- **USB identity:** a HORI POKKEN CONTROLLER 0F0D:0092. The descriptors are from GP2040-CE (MIT, notice in
+  `firmware/THIRD_PARTY.md`).
+- **Host:**
+  - `tools/host/usbpad.py` (`usb://`): the same edenctl API, macros on the device clock, keep-alive PING every
+    300 ms, no gate (the scene report is information only), logs via the optional sys-autopilot.
+  - `tools/host/sequences.py`: launch/terminate/dismiss with still checks, shared with autopilot.
+  - `tools/host/flash_pad.py`: esptool 4.13.0 venv `/home/user/ssbu-switch-remote-work/venv-esptool`.
+  - `smoke.py --backend usb --device … pad-check|launch|…`, `switch_test.py --backend usb` (now the default), the
+    runner patch, `resume_smoke.ps1 -Phase flash|pad`.
+- **Tests:** core 84 checks (`make -C firmware test`); host 116 OK, including `usb://` against the pty simulator
+  `firmware/out/padsim` (device-clock macro timing within ±3 ms, watchdog, sequences) and flashing with a fake
+  esptool.
+- **Blocker (needs the operator, sudo):** my user is not in `dialout`, so the CH343 tty won't be accessible. Either
+  fix works:
+  - a udev rule, e.g. `/etc/udev/rules.d/99-switch-pad.rules`:
+    `SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", MODE="0660", GROUP="plugdev"`, then
+    `udevadm control --reload && udevadm trigger`;
+  - or `usermod -aG dialout intpa` plus a re-login.
+- **Card session (revised):**
+  - REQUIRED `card-jobs/e1-pad-route-nro-3d6e1bb`: remove our boot2.flag, update the NRO (`d4581396…`) and the
+    config (scene_host). Dry run OK.
+  - OPTIONAL `card-jobs/e2-optional-autopilot-1.5.0` (no order.txt).
+  - d1 is superseded.
+
+## Option (d): staged, NOT installed (ruled 2026-11-16; INPUT superseded by the USB pad, see above)
 
 - **Card job** `card-jobs/d1-autopilot-1.5.0-nro-3d6e1bb` (one session; `order.txt` = the ruling). Dry run on a
   fake card mirroring today's state (r1 NRO/config, r3 sysmodule files and flag, another plugin): all readbacks OK,
@@ -139,7 +174,19 @@ Option (d): every step runs with `--backend autopilot`; `resume_smoke.ps1 -Phase
 
 ## Next commands
 
-1. The CARD INSTALL REQUEST (table above) is posted to the INBOX; wait for the order (END).
+0. **USB pad (new primary route):**
+   1. The operator applies the serial-access fix (above).
+   2. Plug the board's UART port (beside BOOT/IO0; antenna up: right) into the Surface. Then
+      `/usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase flash` (receipt in
+      the artifacts).
+   3. Plug the OTG port (beside EN/RST; left) into a dock USB-A port.
+   4. With the console on HOME and SSBU first, run `... -Phase pad` (pad-check: `usb_mounted=1`; preflight;
+      launch).
+   5. If the console ignores the pad: System Settings → Controllers and Sensors → Pro Controller Wired
+      Communication ON.
+   6. The card session (e1, optionally e2) is still needed for the NRO/config update and the boot2 removal. It is
+      independent of the pad.
+1. The CARD INSTALL REQUEST is posted to the INBOX (revised: e1 required, e2 optional); wait for the order (END).
 2. On the order, with the console in UMS or DBI MTP:
    `/usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase card`.
 3. The operator reboots, presses A then Y on "sys-autopilot (switch-remote driver)" in ovlSysmodules, and leaves

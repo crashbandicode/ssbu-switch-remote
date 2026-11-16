@@ -4,6 +4,19 @@
 (`sysmodule/core/service.cpp`), and between the in-game NRO and the sysmodule. Tested on the host
 against the loopback build (`tools/host/tests/test_switch_remote.py`).
 
+## switch-pad (the ESP32-S3 wired controller, DESIGN.md section 13)
+
+The firmware speaks the host-channel lines below over its UART (921,600 baud, 8N1, LF) with these differences:
+- `AUTH` is accepted with any token (`OK auth switch-pad`): the link is physical.
+- `VERSION` → `OK version switch-pad <x.y.z> usb=hori-0f0d:0092`.
+- `STATUS` → `OK status fw= usb= usb_mounted=0|1 uptime_ms= reports= watchdog_trips= macro=`.
+- `BTN 18|19` (HOME, CAPTURE) are accepted, for the host's still-checked sequences. Macros still refuse bits 16+.
+- `MPLAY` frames run at 60 Hz of the device clock.
+- No gate.
+- LAUNCH/TERMINATE/LIST/FILE/PUT/... answer `ERR unsupported`.
+- If no line arrives for 1 s, everything goes neutral, including a playing macro (`error=watchdog`).
+- Boot noise from the ROM may precede the first reply; the host skips lines until `OK auth`.
+
 ## Transport
 
 - TCP, ASCII lines ending in LF (a CR before it is ignored), at most 255 bytes per request.
