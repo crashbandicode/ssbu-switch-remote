@@ -124,6 +124,9 @@ extern "C" void app_main(void) {
     uc.source_clk = UART_SCLK_DEFAULT;
     ESP_ERROR_CHECK(uart_driver_install(kUart, 16384, 4096, 0, nullptr, 0));
     ESP_ERROR_CHECK(uart_param_config(kUart, &uc));
+    // With CONFIG_ESP_CONSOLE_NONE nothing routes UART0 to its pins: the board's CH343 is on TX GPIO43 / RX GPIO44
+    // (Freenove C_Tutorial.pdf p.145). Hardware test 2026-11-16: without this the app never answered.
+    ESP_ERROR_CHECK(uart_set_pin(kUart, 43, 44, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 
     tinyusb_config_t tc = {};
     tc.device_descriptor = &kDevice;

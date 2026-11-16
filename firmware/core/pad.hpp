@@ -18,7 +18,7 @@
 namespace swpad {
 
 constexpr std::string_view kName = "switch-pad";
-constexpr std::string_view kVersion = "0.1.1";
+constexpr std::string_view kVersion = "0.1.2";
 constexpr std::string_view kUsbIdentity = "hori-0f0d:0092";
 constexpr uint64_t kFreq = 1000000;          // timestamps are microseconds
 constexpr uint64_t kWatchdogUs = 1000000;    // 1 s of host silence -> neutral

@@ -72,10 +72,10 @@ class Link(Base):
     def test_connects_through_boot_noise_and_answers(self):
         self.assertEqual(self.c.request('ping')['ok'], True)
         v = self.c.request('switch.version')['result']['reply']
-        self.assertEqual(v, 'OK version switch-pad 0.1.1 usb=hori-0f0d:0092')
+        self.assertEqual(v, 'OK version switch-pad 0.1.2 usb=hori-0f0d:0092')
         s = self.c.request('status')['result']
         self.assertEqual((s['backend'], s['state'], s['fw'], s['usb'], s['usb_mounted'], s['gate']),
-                         ('usb', 'reachable', 'switch-pad/0.1.1', 'hori-0f0d:0092', '1', 'not_applicable'))
+                         ('usb', 'reachable', 'switch-pad/0.1.2', 'hori-0f0d:0092', '1', 'not_applicable'))
         self.assertIsNone(s['running'])  # no scene receiver: unknown (information only)
 
     def test_make_client_usb_scheme(self):
@@ -253,7 +253,7 @@ class PiLink(unittest.TestCase):
         c = self.client()
         try:
             self.assertTrue(c.request('input.button', {'button': 'a', 'duration_ms': 100})['ok'])
-            self.assertEqual(c.request('switch.version')['result']['reply'][:30], 'OK version switch-pad 0.1.1 us')
+            self.assertEqual(c.request('switch.version')['result']['reply'][:30], 'OK version switch-pad 0.1.2 us')
             time.sleep(0.2)
             self.assertTrue(any(r[0] == 0x04 for r in self.reports()))
             self.assertEqual(c.request('status')['result']['backend'], 'usb')
