@@ -22,6 +22,16 @@
 | Stack | 16 KiB main stack. An overflow would crash (a fatal), so it is not this case; raised for margin. | npdm `main_thread_stack_size` |
 | nifm | Not needed to bind 0.0.0.0. r3 never looked, so it couldn't tell whether the LAN was up. | |
 
+## sys-autopilot (evaluated 2026-11-16 ~02:55Z, read only, `/home/user/ref/sys-autopilot` 6ca6aac)
+
+Its hardware-tested server rebuilds the listener on every IP change, because "a network teardown can otherwise
+leave the listener silently not accepting (poll() doesn't always report it)" (`source/common/server.c:227-251`,
+CHANGELOG lines 94-95). r3 bound once at boot, before DHCP; that is the **probable root cause** of the r3 symptom
+(ARP answers, TCP times out with no RST). It also takes part in PSC sleep/wake; per its CHANGELOG, a sleep with
+sockets open crashes the console on wake (`server.c:187-219`). License: MIT is declared only in `package.json`,
+and there is no LICENSE file, so it is study-only and nothing is copied. Proposed r5 (awaiting the primary's
+ruling): r4 plus an IP-change listener rebuild plus PSC sleep handling, attributed.
+
 ## What r4 (sysmodule 0.2.0, `9d8a027`, built, NOT installed) changes
 
 - **SD first.** `sm` + `fs` + the SD mount come first, retried until they succeed. Then a breadcrumb:
