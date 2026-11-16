@@ -10,6 +10,25 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **~13:55Z CURRENT PLAN (the primary): ONE full session on TR rc.15 + LEGEND change; NO more mini-runs.**
+  1. Wait for INBOX "LEGEND RELEASE READY" (rc15-crop-editor-sol: NRO + sha + size + check list). A background watcher is
+     armed in this session.
+  2. Install it over DBI FTP: job `ssbu-switch-remote-work/card-jobs/l1-tr-legend/` (order.txt staged; add the NRO under
+     `sd/…/plugins/libtraining_rooms.nro`, `authorized.json` like g1b's, `go.txt`). Route in: `pad_route.py
+     …/ftp-r2/route-to-ftp.json`; `own_install.py preflight` then `install --transport ftp --root
+     ftp://<ftp-host>:<ftp-port>` (STOR .sr-part → RETR sha → rename → readback; on-card + local rc.15 rollback); route
+     out `route-exit-dbi.json`. Post the install table (19 plugins) BEFORE the session; INSTALL.md + receipts go to
+     `artifacts/switch-remote-card/install-l1-tr-legend/`.
+  3. The runbook (compression worker): REMOVED-BY-LEGEND colour rows, LEG-01… rows from the check list, dry-run READY.
+     Estimate (pre-legend): 219 executed rows, ~1.44 h (INBOX 39492).
+  4. Before launch: harness-lib fixes (no per-row recording on hardware; the gif step → marks + an offline cut from the
+     a80d514 session recording; it was asked who owns the cutter) + the client start guard (wait while OBS is
+     finalizing) → a 1-min live check (start/mark/stop/cut one GIF) → the ONE runner invocation (`switch_hw.py up` →
+     `runner.py run $RB/rows.json --instances … --out …` → `down`). Post the start time + row count, progress every
+     ~30 min, and the results.
+  - **Done since 13:11Z:** hw-run-2 / 2b (F05′ PASS; F07 PASS in 2b; F04 obs_500, F08 GifRefused = harness);
+    Screen Burn-In Reduction **On → Off** (operator-approved; `artifacts/switch-settings-autosleep/SETTINGS-CHANGE.md`,
+    revert = back to On); obsws file-finalize fix `40cb949`. The old mini-run workers are told to release and END.
 - **13:11Z HW RUNBOOK READY posted (INBOX line 39177):** 467 catalog / 254 executed / 100 covered / 19 pilot / 33 PERF / 26
   ONLINE / 15 2P / 20 NOT-TESTABLE. ONE session ~5.4 h. `$RB/rows.json` dry-run READY (1,901 segments). Selector tests 16/16;
   commit `7a473a3`. Follow-up: 195 unmapped TR src files select everything, so they need mapping.
