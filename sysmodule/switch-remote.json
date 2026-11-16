@@ -14,7 +14,7 @@
     "filesystem_access": {
         "permissions": "0xffffffffffffffff"
     },
-    "service_access": ["fsp-srv", "set:sys", "hid:dbg", "bsd:u", "pm:dmnt", "pm:info", "ns:dev", "ns:am2", "pgl"],
+    "service_access": ["fsp-srv", "set:sys", "hid:dbg", "bsd:u", "pm:dmnt", "pm:info", "ns:dev", "ns:am2", "pgl", "pm:shell"],
     "service_host": [],
     "kernel_capabilities": [
         {

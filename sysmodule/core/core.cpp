@@ -1,6 +1,8 @@
 // switch-remote sysmodule: pure logic. See core.hpp.
 #include "core.hpp"
 
+#include <cstdio>
+
 namespace sr {
 
 int button_bit(std::string_view name) {
@@ -168,6 +170,44 @@ const char* first_tile_check(const AppRecord* records, size_t n, uint64_t target
     for (size_t i = 1; i < n; i++)
         if (records[i].last_updated >= records[0].last_updated) return "first_tile_ambiguous";
     return nullptr;
+}
+
+bool update_target(std::string_view key, char* out, size_t cap) {
+    for (const auto& t : kUpdateTargets) {
+        if (t.key == key) {
+            snprintf(out, cap, "%.*s", int(t.path.size()), t.path.data());
+            return true;
+        }
+    }
+    if (key.substr(0, 5) == "data/") {
+        std::string_view name = key.substr(5);
+        if (name.empty() || name.size() > 64 || name == "backups" || name[0] == '.') return false;
+        for (char ch : name)
+            if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' ||
+                  ch == '-' || ch == '.'))
+                return false;
+        snprintf(out, cap, "%.*s/%.*s", int(kDataDir.size()), kDataDir.data(), int(name.size()), name.data());
+        return true;
+    }
+    return false;
+}
+
+void backup_path(std::string_view target, const char* new_sha, char* out, size_t cap) {
+    size_t slash = target.rfind('/');
+    std::string_view name = slash == std::string_view::npos ? target : target.substr(slash + 1);
+    snprintf(out, cap, "%.*s/pre-%.16s.%.*s", int(kBackupDir.size()), kBackupDir.data(), new_sha, int(name.size()),
+             name.data());
+}
+
+bool boot_delay_needed(uint64_t uptime_ms) { return uptime_ms < kBootWindowMs; }
+
+bool detach_due(bool attached, bool active_now, uint64_t now_ms, uint64_t last_active_ms) {
+    return attached && !active_now && now_ms >= last_active_ms && now_ms - last_active_ms >= kIdleDetachMs;
+}
+
+bool is_stage_file(std::string_view name) {
+    constexpr std::string_view suffix = ".sr-stage";
+    return name.size() > suffix.size() && name.substr(name.size() - suffix.size()) == suffix;
 }
 
 const char* system_sequence_allowed(bool application_running, bool sequence_busy) {
@@ -449,6 +489,27 @@ const char* parse_request(std::string_view line, Request& r) {
     } else if (m == "RELAUNCH") {
         if (!want(1)) return err;
         r.method = Method::Relaunch;
+    } else if (m == "PUT") {
+        // PUT <key> <size> <sha256 hex>, then exactly <size> raw bytes.
+        if (!want(4) || !parse_u64(f[2], r.size)) return err;
+        if (r.size == 0 || r.size > kPutMax) return "out_of_range";
+        char path[256];
+        if (!update_target(f[1], path, sizeof path)) return "not_updatable";
+        if (f[3].size() != 64) return err;
+        for (size_t i = 0; i < 64; i++) {
+            char ch = f[3][i];
+            if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'))) return err;
+            r.sha[i] = ch;
+        }
+        r.sha[64] = 0;
+        r.key = f[1];
+        r.method = Method::Put;
+    } else if (m == "RESTART") {
+        if (!want(1)) return err;
+        r.method = Method::Restart;
+    } else if (m == "SHUTDOWN") {
+        if (!want(1)) return err;
+        r.method = Method::Shutdown;
     } else if (m == "RECORDS") {
         if (!want(1)) return err;
         r.method = Method::Records;

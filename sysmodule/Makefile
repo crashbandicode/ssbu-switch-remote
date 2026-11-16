@@ -20,13 +20,13 @@ ARCH     := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CXXFLAGS := -g -O2 -Wall -Wextra -Werror -ffunction-sections -fdata-sections -fno-rtti -fno-exceptions \
             -std=gnu++17 $(ARCH) -D__SWITCH__ -isystem $(LIBNX)/include -Icore
 LDFLAGS  := -specs=$(LIBNX)/switch.specs -g $(ARCH) -Wl,--gc-sections -Wl,-Map,out/$(NAME).map -L$(LIBNX)/lib
-SRCS     := source/main.cpp core/core.cpp core/service.cpp
+SRCS     := source/main.cpp core/core.cpp core/service.cpp core/sha256.cpp
 OBJS     := $(patsubst %.cpp,out/obj/%.o,$(SRCS))
 SD       := out/sd/atmosphere/contents/$(TITLE_ID)
 
 all: $(SD)/exefs.nsp $(SD)/toolbox.json $(SD)/flags/boot2.flag
 
-out/obj/%.o: %.cpp core/core.hpp core/service.hpp
+out/obj/%.o: %.cpp core/core.hpp core/service.hpp core/sha256.hpp
 	@mkdir -p $(dir $@)
 	$(A64)g++ $(CXXFLAGS) -c $< -o $@
 
@@ -60,13 +60,13 @@ $(SD)/flags/boot2.flag:
 
 test: out/loopback
 	@mkdir -p out
-	g++ -std=c++17 -O1 -Wall -Wextra -Werror -Icore core/core.cpp core/tests/test_core.cpp -o out/test_core
+	g++ -std=c++17 -O1 -Wall -Wextra -Werror -Icore core/core.cpp core/sha256.cpp core/tests/test_core.cpp -o out/test_core
 	./out/test_core
 
 # The host loopback server (tools/host/tests use it).
-out/loopback: host_loopback/loopback.cpp core/core.cpp core/service.cpp core/core.hpp core/service.hpp
+out/loopback: host_loopback/loopback.cpp core/core.cpp core/service.cpp core/sha256.cpp core/core.hpp core/service.hpp core/sha256.hpp
 	@mkdir -p out
-	g++ -std=c++17 -O1 -Wall -Wextra -Werror -pthread -Icore core/core.cpp core/service.cpp host_loopback/loopback.cpp -o $@
+	g++ -std=c++17 -O1 -Wall -Wextra -Werror -pthread -Icore core/core.cpp core/service.cpp core/sha256.cpp host_loopback/loopback.cpp -o $@
 
 clean:
 	rm -rf out

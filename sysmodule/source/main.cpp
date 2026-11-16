@@ -102,6 +102,40 @@ public:
         return rc;
     }
     void sleep_ms(uint64_t ms) override { svcSleepThread(ms * 1'000'000ull); }
+    bool write_at(const char* path, uint64_t offset, const void* data, size_t n) override {
+        char full[300];
+        snprintf(full, sizeof full, "sdmc:%s", path);
+        FILE* f = fopen(full, offset == 0 ? "wb" : "r+b");
+        if (!f) return false;
+        bool ok = fseek(f, long(offset), SEEK_SET) == 0 && fwrite(data, 1, n, f) == n;
+        ok = fclose(f) == 0 && ok;
+        return ok;
+    }
+    bool replace(const char* from, const char* to) override {
+        char a[300], b[300];
+        snprintf(a, sizeof a, "sdmc:%s", from);
+        snprintf(b, sizeof b, "sdmc:%s", to);
+        ::remove(b);  // FAT rename does not replace; the old file is already backed up and read back
+        return rename(a, b) == 0;
+    }
+    bool remove(const char* path) override {
+        char full[300];
+        snprintf(full, sizeof full, "sdmc:%s", path);
+        return ::remove(full) == 0;
+    }
+    bool make_dirs(const char* dir) override {
+        char full[300];
+        int n = snprintf(full, sizeof full, "sdmc:%s", dir);
+        for (int i = 6; i <= n; i++) {
+            if (i == n || full[i] == '/') {
+                char c = full[i];
+                full[i] = 0;
+                mkdir(full, 0777);
+                full[i] = c;
+            }
+        }
+        return true;
+    }
     bool hdls_attach() override {
         if (attached_) return true;
         if (!work_ready_) {
@@ -189,13 +223,14 @@ private:
 
 NxPlatform* g_platform;
 sr::Service* g_service;
+volatile bool g_pad_stop = false;
 Config g_cfg;
 
-void pad_thread(void*) {
+void pad_thread(void*) {  // ends when g_pad_stop is set (RESTART/SHUTDOWN)
     sr::PadState last;
     u64 last_tick = 0;
     bool attached = false;
-    while (true) {
+    while (!g_pad_stop) {
         svcSleepThread(1'000'000);
         u64 now = armGetSystemTick();
         sr::PadState want;
@@ -203,6 +238,10 @@ void pad_thread(void*) {
         if (need && !attached) {
             attached = g_platform->hdls_attach();
             g_service->set_attached(attached);
+        }
+        if (!need && g_service->attached()) {  // idle detach (core detach_due): a hard kill then leaves no pad
+            g_platform->hdls_detach();
+            g_service->set_attached(false);
         }
         if (!g_service->attached()) {
             attached = false;
@@ -235,7 +274,7 @@ struct SocketSink final : Sink {
 struct Conn {
     int fd = -1;
     Session session;
-    char buf[kLineMax];
+    char buf[4096];
     size_t len = 0;
 };
 
@@ -289,16 +328,25 @@ bool pump(Conn& c) {
     if (n <= 0) return false;
     c.len += size_t(n);
     SocketSink out(c.fd);
-    while (char* nl = static_cast<char*>(memchr(c.buf, '\n', c.len))) {
-        size_t line_len = size_t(nl - c.buf);
-        if (!g_service->handle(c.session, std::string_view(c.buf, line_len), out)) return false;
-        memmove(c.buf, nl + 1, c.len - line_len - 1);
-        c.len -= line_len + 1;
+    size_t off = 0;
+    while (off < c.len) {
+        if (!c.session.scene && g_service->put_pending()) {  // PUT payload bytes
+            off += g_service->put_feed(c.buf + off, c.len - off, out);
+            continue;
+        }
+        char* nl = static_cast<char*>(memchr(c.buf + off, '\n', c.len - off));
+        if (!nl) break;
+        size_t line_len = size_t(nl - (c.buf + off));
+        if (!g_service->handle(c.session, std::string_view(c.buf + off, line_len), out)) return false;
+        off += line_len + 1;
     }
-    return c.len < sizeof c.buf;
+    memmove(c.buf, c.buf + off, c.len - off);
+    c.len -= off;
+    return c.len < kLineMax || g_service->put_pending();
 }
 
-void serve() {
+// RESTART / SHUTDOWN (and nothing else) end serve(): every socket is closed and the pad detached first.
+sr::Action serve() {
     int host_l = -1, scene_l = -1;
     Conn host, scene;
     u64 last_app_poll = 0;
@@ -337,6 +385,13 @@ void serve() {
             g_platform->log("host peer closed");
             g_service->on_disconnect(host.session);
             close_conn(host);
+            sr::Action a = g_service->take_action();
+            if (a != sr::Action::None) {
+                close_conn(scene);
+                close(host_l);
+                close(scene_l);
+                return a;
+            }
         }
         if (si >= 0 && p[si].revents && !pump(scene)) close_conn(scene);
     }
@@ -374,6 +429,7 @@ bool init_services() {
                {"pm:info", pminfoInitialize()},
                {"ns:dev", nsdevInitialize()},
                {"ns:am2", nsInitialize()},
+               {"pm:shell", pmshellInitialize()},
                {"pgl", pglInitialize()}};
     for (auto& s : svc) {
         if (R_FAILED(s.rc)) {
@@ -402,7 +458,9 @@ Thread g_pad;
 }  // namespace
 
 int main(int, char**) {
-    svcSleepThread(kBootDelayNs);
+    // At boot, wait before touching services; a runtime start (ovlSysmodules, RESTART) does not
+    // (core boot_delay_needed).
+    if (sr::boot_delay_needed(armTicksToNs(armGetSystemTick()) / 1000000)) svcSleepThread(kBootDelayNs);
     if (!init_services()) {
         write_log("init failed; idling");
         while (true) svcSleepThread(60'000'000'000ull);
@@ -417,11 +475,29 @@ int main(int, char**) {
     static sr::Service service(platform, g_cfg);
     g_platform = &platform;
     g_service = &service;
+    service.sweep_stage();  // a hard kill (ovlSysmodules) can interrupt a PUT
     if (R_SUCCEEDED(threadCreate(&g_pad, pad_thread, nullptr, nullptr, 0x4000, 0x2c, -2))) threadStart(&g_pad);
     else write_log("pad thread failed");
     char line[96];
     snprintf(line, sizeof line, "serving port=%u scene_port=%u inject=%d", g_cfg.port, g_cfg.port + 1, int(g_cfg.inject));
     write_log(line);
-    serve();
+    sr::Action action = serve();
+    g_pad_stop = true;
+    threadWaitForExit(&g_pad);
+    threadClose(&g_pad);
+    platform.hdls_detach();  // no phantom controller after RESTART or SHUTDOWN
+    if (action == sr::Action::Restart) {
+        // A fresh instance of this program (pm and the loader allow a second instance of a non-application
+        // program: AMS pm_process_manager.cpp:131 checks applications only; ldr PinProgram has no uniqueness
+        // check, ldr_process_creation.cpp:918-921). It loads the exefs.nsp now on the card; this one then exits.
+        const NcmProgramLocation loc{.program_id = sr::kOwnProgramId, .storageID = NcmStorageId_None};
+        u64 pid = 0;
+        Result rc = pmshellLaunchProgram(0, &loc, &pid);
+        snprintf(line, sizeof line, "restart: launched pid=%llu rc=0x%x; exiting", (unsigned long long)pid, rc);
+        write_log(line);
+    } else {
+        write_log("shutdown: exiting");
+    }
+    socketExit();
     return 0;
 }

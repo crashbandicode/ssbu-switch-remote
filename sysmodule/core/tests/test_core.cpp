@@ -5,7 +5,10 @@
 #include <cstdlib>
 #include <string>
 
+#include <algorithm>
+
 #include "core.hpp"
+#include "sha256.hpp"
 
 using namespace sr;
 
@@ -289,6 +292,70 @@ static void local_wireless_allowed_nso_refused() {
     CHECK(gate(r, 1000, F) == Gate::Allowed);
 }
 
+static std::string sha_hex(const std::string& s) {
+    Sha256 h;
+    h.update(s.data(), s.size());
+    char out[65];
+    h.finish_hex(out);
+    return out;
+}
+
+static void sha256_known_vectors() {
+    CHECK(sha_hex("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    CHECK(sha_hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    CHECK(sha_hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") ==
+          "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+    std::string million(1000000, 'a');
+    CHECK(sha_hex(million) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+    // Streaming in odd chunks gives the same digest.
+    Sha256 h;
+    for (size_t i = 0; i < million.size(); i += 777) h.update(million.data() + i, std::min<size_t>(777, million.size() - i));
+    char out[65];
+    h.finish_hex(out);
+    CHECK(std::string(out) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+}
+
+static void update_allowlist_is_own_files_only() {
+    char p[256];
+    CHECK(update_target("sysmodule.exefs", p, sizeof p) &&
+          std::string(p) == "/atmosphere/contents/4200000000005352/exefs.nsp");
+    CHECK(update_target("nro", p, sizeof p) &&
+          std::string(p) == "/atmosphere/contents/01006A800016E000/romfs/skyline/plugins/libssbu_switch_remote.nro");
+    CHECK(update_target("config", p, sizeof p) && std::string(p) == "/ultimate/switch-remote/config.txt");
+    CHECK(update_target("data/notes.txt", p, sizeof p) && std::string(p) == "/ultimate/switch-remote/notes.txt");
+    for (const char* bad : {"data/", "data/backups", "data/../x", "data/a/b", "data/.hidden", "libtraining_rooms.nro",
+                            "plugins/libtraining_rooms.nro", "/atmosphere/contents/x", "exefs", ""})
+        CHECK(!update_target(bad, p, sizeof p));
+    backup_path("/atmosphere/contents/4200000000005352/exefs.nsp",
+                "f3fe636a1cd7bd0f58599b2080cc4735caeb67684dbdccf5eccb6ce14b75d6c5", p, sizeof p);
+    CHECK(std::string(p) == "/ultimate/switch-remote/backups/pre-f3fe636a1cd7bd0f.exefs.nsp");
+    Request r;
+    const std::string sha(64, 'a');
+    const std::string put_line = "PUT nro 37000 " + sha;  // Request views point into the line
+    STREQ(parse_request(put_line, r), nullptr);
+    CHECK(r.method == Method::Put && r.key == "nro" && r.size == 37000 && std::string(r.sha) == sha);
+    STREQ(parse_request("PUT libtraining_rooms.nro 10 " + sha, r), "not_updatable");
+    STREQ(parse_request("PUT nro 0 " + sha, r), "out_of_range");
+    STREQ(parse_request("PUT nro 3000000 " + sha, r), "out_of_range");
+    STREQ(parse_request("PUT nro 10 " + std::string(64, 'G'), r), "bad_arguments");
+    STREQ(parse_request("PUT nro 10 abc", r), "bad_arguments");
+    STREQ(parse_request("RESTART", r), nullptr);
+    CHECK(r.method == Method::Restart);
+    STREQ(parse_request("SHUTDOWN", r), nullptr);
+    CHECK(r.method == Method::Shutdown);
+}
+
+static void lifecycle_rules() {
+    CHECK(boot_delay_needed(5000));       // at boot
+    CHECK(!boot_delay_needed(3600000));   // ovlSysmodules start, RESTART
+    CHECK(!detach_due(false, false, 999999, 0));
+    CHECK(!detach_due(true, true, 999999, 0));
+    CHECK(!detach_due(true, false, 59999, 0));
+    CHECK(detach_due(true, false, 60000, 0));
+    CHECK(!detach_due(true, false, 10, 20));  // clock below the last activity: never detach early
+    CHECK(is_stage_file("exefs.nsp.sr-stage") && !is_stage_file("exefs.nsp") && !is_stage_file(".sr-stage"));
+}
+
 static void line_buffer() {
     LineBuf<16> b;
     b.put("OK ");
@@ -314,6 +381,9 @@ int main() {
     launch_only_without_application();
     first_tile_requires_both_signals();
     local_wireless_allowed_nso_refused();
+    sha256_known_vectors();
+    update_allowlist_is_own_files_only();
+    lifecycle_rules();
     line_buffer();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

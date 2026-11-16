@@ -315,6 +315,79 @@ class AgainstLoopback(unittest.TestCase):
             self.assertEqual(r['error']['code'], 'bad_path', bad)
         self.assertEqual(self.c.request('switch.list', {'root': 'nand'})['error']['code'], 'bad_root')
 
+    NRO_PATH = 'atmosphere/contents/01006A800016E000/romfs/skyline/plugins/libssbu_switch_remote.nro'
+
+    def test_put_updates_own_file_with_backup_and_receipt(self):
+        import hashlib
+        target = self.lb.root / self.NRO_PATH
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b'old nro' * 1000)
+        new = self.lb.dir / 'new.nro'
+        new.write_bytes(bytes(range(256)) * 600)  # 150 KB: several 4 KiB receive buffers and 64 KiB chunks
+        r = self.c.request('switch.update', {'files': {'nro': str(new)}, 'receipts': str(self.lb.dir / 'receipts')})
+        self.assertTrue(r['ok'], r)
+        f = r['result']['files'][0]
+        self.assertEqual((f['old'], f['new'], f['readback']),
+                         (hashlib.sha256(b'old nro' * 1000).hexdigest(), hashlib.sha256(new.read_bytes()).hexdigest(), 'ok'))
+        self.assertEqual(target.read_bytes(), new.read_bytes())
+        backup = self.lb.root / f['backup'].lstrip('/')
+        self.assertEqual(backup.read_bytes(), b'old nro' * 1000)
+        self.assertTrue(Path(r['result']['receipt']).exists())
+        self.assertEqual(list(target.parent.glob('*.sr-stage')), [])
+        again = self.c.request('switch.put', {'key': 'nro', 'path': str(new)})['result']
+        self.assertTrue(again['unchanged'])
+        self.assertTrue(self.c.request('status')['result']['last_put'].startswith('unchanged'))
+
+    def test_put_bad_sha_or_other_files_change_nothing(self):
+        target = self.lb.root / self.NRO_PATH
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b'keep me')
+        other = target.parent / 'libtraining_rooms.nro'
+        other.write_bytes(b'not ours')
+        # A payload whose bytes don't match the announced sha256.
+        with self.c.lock:
+            self.c.conn.open()
+            self.c.conn.send_line(f'PUT nro 5 {"0" * 64}')
+            self.c.conn.sock.sendall(b'xxxxx')
+            reply = self.c.conn.read_line()
+        self.assertEqual(reply, 'ERR put_failed sha_mismatch')
+        self.assertEqual(target.read_bytes(), b'keep me')
+        self.assertEqual(list(target.parent.glob('*.sr-stage')), [])
+        r = self.c.request('switch.put', {'key': 'plugins/libtraining_rooms.nro', 'path': str(target)})
+        self.assertEqual(r['error']['code'], 'not_updatable')
+        self.assertEqual(other.read_bytes(), b'not ours')
+
+    def test_restart_reconnects_to_a_fresh_instance(self):
+        (self.lb.root / 'ultimate' / 'switch-remote').mkdir(parents=True, exist_ok=True)
+        note = self.lb.dir / 'n.txt'
+        note.write_text('hello')
+        self.assertTrue(self.c.request('switch.put', {'key': 'data/notes.txt', 'path': str(note)})['ok'])
+        self.assertTrue(self.c.request('status')['result']['last_put'].startswith('ok_'))
+        r = self.c.request('switch.restart', {'wait_s': 10})
+        self.assertTrue(r['ok'], r)
+        self.assertEqual(r['result']['reply'], 'OK restarting')
+        self.assertEqual(r['result']['status']['last_put'], 'none', 'a fresh instance')
+        self.assertTrue(self.c.request('ping')['ok'])
+        # Starting it again while it runs is harmless: the second instance can't take the port and the first serves on.
+        self.assertTrue(self.c.request('status')['ok'])
+
+    def test_shutdown_detaches_and_exits(self):
+        self.lb.feed_scene()
+        self.assertTrue(self.c.request('input.button', {'button': 'b', 'state': 'press', 'lease_ms': 8000})['ok'])
+        time.sleep(0.2)
+        self.assertEqual(self.c.request('switch.shutdown')['result']['reply'], 'OK shutting_down')
+        self.assertEqual(self.lb.proc.wait(timeout=5), 0)
+        events = [s.get('event') for s in self.lb.pad()]
+        self.assertEqual(events[-1], 'detach', 'no phantom controller after SHUTDOWN')
+        self.assertEqual(self.c.request('status')['result']['state'], 'unreachable')
+
+    def test_start_sweeps_interrupted_put_stage(self):
+        stage = self.lb.root / 'ultimate' / 'switch-remote' / 'config.txt.sr-stage'
+        stage.parent.mkdir(parents=True, exist_ok=True)
+        stage.write_bytes(b'half a file')
+        self.c.request('switch.restart', {'wait_s': 10})  # a fresh start sweeps
+        self.assertFalse(stage.exists())
+
     def test_dropped_connection_reports_not_running(self):
         self.assertTrue(self.c.request('ping')['ok'])
         self.lb.proc.kill()

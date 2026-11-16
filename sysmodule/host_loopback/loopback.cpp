@@ -71,6 +71,24 @@ public:
     }
     uint32_t terminate(uint64_t) override { return std::remove((g_root + "/fake-app").c_str()) == 0 ? 0 : 1; }
     void sleep_ms(uint64_t ms) override { usleep(useconds_t(ms * 1000)); }
+    bool write_at(const char* path, uint64_t offset, const void* data, size_t n) override {
+        std::string full = g_root + path;
+        FILE* f = std::fopen(full.c_str(), offset == 0 ? "wb" : "r+b");
+        if (!f) return false;
+        bool ok = std::fseek(f, long(offset), SEEK_SET) == 0 && std::fwrite(data, 1, n, f) == n;
+        ok = std::fclose(f) == 0 && ok;
+        return ok;
+    }
+    bool replace(const char* from, const char* to) override {
+        return std::rename((g_root + from).c_str(), (g_root + to).c_str()) == 0;
+    }
+    bool remove(const char* path) override { return std::remove((g_root + path).c_str()) == 0; }
+    bool make_dirs(const char* dir) override {
+        std::string d = g_root + dir;
+        for (size_t i = g_root.size() + 1; i <= d.size(); i++)
+            if (i == d.size() || d[i] == '/') mkdir(d.substr(0, i).c_str(), 0777);
+        return true;
+    }
     bool hdls_attach() override {
         attached_ = true;
         record("{\"event\":\"attach\"");
@@ -138,6 +156,10 @@ void* pad_thread(void*) {
         PadState want;
         bool need = g_service->pad_step(now, want);
         if (need && !g_service->attached()) g_service->set_attached(g_platform.hdls_attach());
+        if (!need && g_service->attached()) {  // idle detach
+            g_platform.hdls_detach();
+            g_service->set_attached(false);
+        }
         if (!g_service->attached()) continue;
         if (!(want == last) || now - last_ns > 50000000ull) {
             g_platform.hdls_send(want);
@@ -166,7 +188,7 @@ struct FdSink final : Sink {
 struct Conn {
     int fd = -1;
     Session session;
-    char buf[kLineMax];
+    char buf[4096];
     size_t len = 0;
 };
 
@@ -190,13 +212,21 @@ bool pump(Conn& c) {
     if (n <= 0) return false;
     c.len += size_t(n);
     FdSink out(c.fd);
-    while (char* nl = static_cast<char*>(std::memchr(c.buf, '\n', c.len))) {
-        size_t line_len = size_t(nl - c.buf);
-        if (!g_service->handle(c.session, std::string_view(c.buf, line_len), out)) return false;
-        std::memmove(c.buf, nl + 1, c.len - line_len - 1);
-        c.len -= line_len + 1;
+    size_t off = 0;
+    while (off < c.len) {
+        if (!c.session.scene && g_service->put_pending()) {
+            off += g_service->put_feed(c.buf + off, c.len - off, out);
+            continue;
+        }
+        char* nl = static_cast<char*>(std::memchr(c.buf + off, '\n', c.len - off));
+        if (!nl) break;
+        size_t line_len = size_t(nl - (c.buf + off));
+        if (!g_service->handle(c.session, std::string_view(c.buf + off, line_len), out)) return false;
+        off += line_len + 1;
     }
-    return c.len < sizeof c.buf;
+    std::memmove(c.buf, c.buf + off, c.len - off);
+    c.len -= off;
+    return c.len < kLineMax || g_service->put_pending();
 }
 
 void accept_into(int lfd, Conn& c, bool scene, const Config& cfg) {
@@ -242,6 +272,7 @@ int main(int argc, char** argv) {
     if (port) cfg.port = uint16_t(port);
     static Service service(g_platform, cfg);
     g_service = &service;
+    service.sweep_stage();
     pthread_t pad;
     pthread_create(&pad, nullptr, pad_thread, nullptr);
     int host_l = listen_on(INADDR_LOOPBACK, cfg.port), scene_l = listen_on(INADDR_LOOPBACK, uint16_t(cfg.port + 1));
@@ -264,6 +295,22 @@ int main(int argc, char** argv) {
             g_service->on_disconnect(host.session);
             close(host.fd);
             host = Conn{};
+            Action a = g_service->take_action();
+            if (a != Action::None) {
+                // RESTART re-executes this program (the console launches a fresh instance through pm:shell);
+                // SHUTDOWN exits. Either way every socket closes first.
+                g_stop = true;
+                pthread_join(pad, nullptr);
+                if (g_service->attached()) g_platform.hdls_detach();
+                close(host_l);
+                close(scene_l);
+                if (scene.fd >= 0) close(scene.fd);
+                if (a == Action::Restart) {
+                    std::fprintf(stderr, "[loopback] restarting\n");
+                    execv("/proc/self/exe", argv);
+                }
+                return 0;
+            }
         }
         if (si >= 0 && p[si].revents && !pump(scene)) close(scene.fd), scene = Conn{};
     }

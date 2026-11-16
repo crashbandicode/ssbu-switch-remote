@@ -292,6 +292,15 @@ class SwitchClient:
         if method in ('switch.launch', 'switch.terminate', 'switch.relaunch', 'switch.dismiss', 'switch.detach'):
             reply = self._sys(method.split('.', 1)[1].upper())
             return {'reply': reply}
+        if method == 'switch.put':
+            return self.put(p['key'], p['path'])
+        if method == 'switch.restart':
+            return self.restart(float(p.get('wait_s', 20)))
+        if method == 'switch.shutdown':
+            return self.shutdown()
+        if method == 'switch.update':
+            return self.update(p['files'], restart=bool(p.get('restart', False)),
+                               relaunch_game=bool(p.get('relaunch_game', False)), receipts=p.get('receipts'))
         if method == 'switch.records':
             return self.records()
         if method == 'switch.list':
@@ -354,6 +363,80 @@ class SwitchClient:
                     entries.append({'type': 'dir' if kind == 'd' else 'file', 'size': int(size),
                                     'mtime': int(mtime), 'name': name})
         return entries
+
+    # --- updates without a reboot (DESIGN.md section 3a) ---------------------------------------------------------
+    def put(self, key, path):
+        """Streams one allowlisted file to the sysmodule: it stages, verifies the sha256, backs up the old file,
+        swaps and reads back, then answers with old/new/backup/readback."""
+        import hashlib
+        data = Path(path).read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        with self.lock:
+            if self.conn.sock is None:
+                self.conn.open()
+            self.conn.send_line(f'PUT {key} {len(data)} {digest}')
+            self.conn.sock.sendall(data)
+            reply = self.conn.read_line()
+        if reply.startswith('ERR'):
+            parts = reply.split(' ', 2)
+            raise SwitchError(parts[1] if len(parts) > 1 else 'error', parts[2] if len(parts) > 2 else '')
+        kv = parse_kv(reply)
+        return {'key': key, 'source': str(path), 'bytes': len(data), 'sha256': digest,
+                'unchanged': reply.strip() == 'OK put unchanged', 'old': kv.get('old'), 'new': kv.get('new', digest),
+                'backup': kv.get('backup'), 'readback': kv.get('readback', 'ok' if 'unchanged' in reply else None)}
+
+    def _reconnect(self, wait_s):
+        deadline = time.time() + wait_s
+        last = None
+        while time.time() < deadline:
+            try:
+                self.conn.open()
+                return parse_kv(self.conn.call('STATUS'))
+            except (OSError, ConnectionError, SwitchError) as e:
+                last = e
+                self.conn.close()
+                time.sleep(0.5)
+        raise SwitchError('unreachable', f'no sysmodule within {wait_s} s: {last}')
+
+    def restart(self, wait_s=20.0):
+        """RESTART: the sysmodule launches a fresh instance of itself (pm:shell) and exits; this waits for the new
+        instance to answer, so an exefs.nsp just PUT takes effect with no reboot."""
+        with self.lock:
+            if self.conn.sock is None:
+                self.conn.open()
+            reply = self.conn.call('RESTART')
+            self.conn.close()
+        started = time.time()
+        time.sleep(0.5)
+        status = self._reconnect(wait_s)
+        return {'reply': reply, 'reconnected_after_s': round(time.time() - started, 2), 'status': status}
+
+    def shutdown(self):
+        with self.lock:
+            if self.conn.sock is None:
+                self.conn.open()
+            reply = self.conn.call('SHUTDOWN')
+            self.conn.close()
+        return {'reply': reply}
+
+    def update(self, files, restart=False, relaunch_game=False, receipts=None):
+        """PUTs {key: local path} for allowlisted keys, then optionally RESTARTs the sysmodule (an exefs change) and
+        relaunches the game (an NRO change takes effect at the next launch). Writes one receipt."""
+        receipt = {'time': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'files': [], 'restart': None,
+                   'relaunch': None}
+        for key, path in files.items():
+            receipt['files'].append(self.put(key, path))
+        if restart:
+            receipt['restart'] = self.restart()
+        if relaunch_game:
+            receipt['relaunch'] = {'reply': self._sys('RELAUNCH')}
+        receipt['ok'] = all(f['readback'] == 'ok' for f in receipt['files'])
+        if receipts:
+            out = Path(receipts) / f'update-{receipt["time"].replace(":", "")}.json'
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(receipt, indent=1) + '\n')
+            receipt['receipt'] = str(out)
+        return receipt
 
     def records(self):
         """What the sysmodule sees of the HOME order: ns records and its first-tile verdict (receipt for LAUNCH)."""
@@ -453,6 +536,9 @@ def main(argv=None):
         'list': lambda: c.request('switch.list', {'root': args[0], 'dir': args[1] if len(args) > 1 else ''}),
         'fetch': lambda: c.request('switch.fetch', {'root': args[0], 'path': args[1], 'out': args[2]}),
         'call': lambda: c.request(args[0], json.loads(args[1]) if len(args) > 1 else {}),
+        'put': lambda: c.request('switch.put', {'key': args[0], 'path': os.path.abspath(args[1])}),
+        'restart': lambda: c.request('switch.restart'),
+        'shutdown': lambda: c.request('switch.shutdown'),
     }
     if cmd not in table:
         ap.error(f'unknown command {cmd}')

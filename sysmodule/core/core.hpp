@@ -170,6 +170,7 @@ constexpr uint32_t kFileChunkMax = 64 * 1024;
 enum class Method : uint8_t {
     Auth, Ping, Status, Button, Stick, Reset, MacroBegin, MacroEvent, MacroPlay, MacroStatus, MacroStop,
     Launch, Terminate, Relaunch, Dismiss, Detach, Records, List, File, Bye,
+    Put, Restart, Shutdown,
     Scene,  // scene channel only (from the in-game NRO)
 };
 enum class BtnState : uint8_t { Press, Release, Tap };
@@ -194,10 +195,50 @@ struct Request {
     Root root{};
     Sample sample{};
     SceneReport scene{};
+    std::string_view key;  // PUT target key
+    uint64_t size = 0;     // PUT payload bytes
+    char sha[65] = {};     // PUT expected sha256, lower-case hex
 };
 
 // Null on success, else an error code. `line` excludes the LF; a trailing CR is ignored.
 const char* parse_request(std::string_view line, Request& out);
+
+// ---------------------------------------------------------------------------------------------
+// UPDATE: the files the LAN may replace (operator requirement 2026-11-15 ~01:05Z: switch-remote's own files
+// only). Adding a file later (for example a test NRO the operator orders) is ONE explicit row here.
+// ---------------------------------------------------------------------------------------------
+struct UpdateTarget {
+    std::string_view key;   // what PUT names
+    std::string_view path;  // absolute SD path
+};
+constexpr std::array<UpdateTarget, 4> kUpdateTargets = {{
+    {"sysmodule.exefs", "/atmosphere/contents/4200000000005352/exefs.nsp"},
+    {"sysmodule.toolbox", "/atmosphere/contents/4200000000005352/toolbox.json"},
+    {"nro", "/atmosphere/contents/01006A800016E000/romfs/skyline/plugins/libssbu_switch_remote.nro"},
+    {"config", "/ultimate/switch-remote/config.txt"},
+}};
+// "data/<name>" also maps to /ultimate/switch-remote/<name> (one plain file name; not "backups", no dots-only).
+constexpr std::string_view kDataDir = "/ultimate/switch-remote";
+constexpr std::string_view kBackupDir = "/ultimate/switch-remote/backups";
+constexpr uint64_t kPutMax = 2u << 20;  // 2 MiB: exefs.nsp is ~140 KB, the NRO ~37 KB
+constexpr uint64_t kOwnProgramId = 0x4200000000005352ull;
+// The SD path for `key` into `out`; false when the key is not in the allowlist.
+bool update_target(std::string_view key, char* out, size_t cap);
+// The backup path for a replaced file: <kBackupDir>/pre-<new sha16>.<file name>.
+void backup_path(std::string_view target, const char* new_sha, char* out, size_t cap);
+
+// ---------------------------------------------------------------------------------------------
+// Lifecycle (ovlSysmodules starts and stops sysmodules through pm:shell: a hard kill, no notice;
+// ovl-sysmodules gui_main.cpp:84-101). Nothing may depend on cleanup code running.
+// ---------------------------------------------------------------------------------------------
+// The boot delay keeps services alone while the system boots; a runtime start skips it.
+constexpr uint64_t kBootWindowMs = 60000;
+bool boot_delay_needed(uint64_t uptime_ms);
+// The virtual controller is detached after this long without input, so a hard kill rarely leaves one attached.
+constexpr uint64_t kIdleDetachMs = 60000;
+bool detach_due(bool attached, bool active_now, uint64_t now_ms, uint64_t last_active_ms);
+// A staging file left by an interrupted PUT (swept at start).
+bool is_stage_file(std::string_view name);
 bool path_ok(std::string_view p, bool allow_empty);
 bool parse_u64(std::string_view s, uint64_t& v);
 bool parse_i32(std::string_view s, int32_t& v);

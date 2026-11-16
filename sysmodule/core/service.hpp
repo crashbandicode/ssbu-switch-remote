@@ -3,6 +3,7 @@
 // a fake one (host_loopback/loopback.cpp), so the same code is tested end to end on the host.
 #pragma once
 #include "core.hpp"
+#include "sha256.hpp"
 
 namespace sr {
 
@@ -36,6 +37,12 @@ struct Platform {
     virtual bool list(const char* path, void (*entry)(void* ctx, const Entry& e), void* ctx) = 0;
     // read: up to `max` bytes at `offset` into buf; total size in `size`; -1 when it can't be opened.
     virtual long read(const char* path, uint64_t offset, char* buf, uint32_t max, uint64_t& size) = 0;
+    // Writes `n` bytes at `offset` (offset 0 creates or truncates). Used only for allowlisted update targets.
+    virtual bool write_at(const char* path, uint64_t offset, const void* data, size_t n) = 0;
+    // Renames `from` over `to` (replacing it), and removes a file; both only on allowlisted paths.
+    virtual bool replace(const char* from, const char* to) = 0;
+    virtual bool remove(const char* path) = 0;
+    virtual bool make_dirs(const char* dir) = 0;
 };
 
 // Where replies go (a socket on the console, a buffer in tests).
@@ -49,12 +56,27 @@ struct Session {
     bool scene = false;  // the loopback scene channel from the in-game NRO
 };
 
+// What the platform loop must do after a reply (RESTART: launch a fresh instance of this program, then exit;
+// SHUTDOWN: exit). Both detach the virtual controller and close every socket first.
+enum class Action : uint8_t { None, Restart, Shutdown };
+
 class Service {
 public:
     Service(Platform& p, const Config& c) : p_(p), cfg_(c) {}
 
     // One request line (without LF). False: close the connection.
     bool handle(Session& s, std::string_view line, Sink& out);
+    // PUT payload bytes that follow a PUT line; returns how many were consumed. The reply goes out when the last
+    // byte arrives (verify, back up, swap, read back). put_pending() is true between the line and the last byte.
+    size_t put_feed(const char* data, size_t n, Sink& out);
+    bool put_pending() const { return put_.active; }
+    // Removes staging files an interrupted PUT left (called at start: a hard kill can interrupt one).
+    void sweep_stage();
+    Action take_action() {
+        Action a = action_;
+        action_ = Action::None;
+        return a;
+    }
     // The host client went away: held input is released and a macro stops, so nothing stays pressed
     // without a client (the same idea as a controller-side watchdog).
     void on_disconnect(const Session& s);
@@ -81,6 +103,17 @@ private:
     bool do_list(const Request& r, Sink& out);
     bool do_file(const Request& r, Sink& out);
     bool do_records(Sink& out);
+    bool put_finish(Sink& out);
+    bool hash_file(const char* path, char hex[65], uint64_t& size);
+    struct PutState {
+        bool active = false;
+        char target[256] = {}, stage[272] = {}, expect[65] = {};
+        uint64_t size = 0, received = 0;
+        Sha256 hash;
+    } put_;
+    Action action_ = Action::None;
+    uint64_t last_active_ = 0;
+    char last_put_[200] = "none";
     static constexpr size_t kRecords = 16;
     const char* input_refusal(uint64_t now);
     void root_path(Root r, std::string_view rel, char* out, size_t cap);

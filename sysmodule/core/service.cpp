@@ -3,6 +3,8 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
+#include <string>
 
 namespace sr {
 
@@ -74,6 +76,7 @@ bool Service::pad_step(uint64_t now, PadState& want) {
     want = PadState{};
     if (seq_len_) {
         // A fixed system sequence: only while no application runs (core: system_sequence_allowed).
+        last_active_ = now * 1000 / p_.freq();
         if (seq_pos_ == 0 && seq_next_ == 0 && app_pid_) {
             logf("sequence %s refused: application_running", seq_name_);
             seq_len_ = 0;
@@ -92,7 +95,9 @@ bool Service::pad_step(uint64_t now, PadState& want) {
         return true;
     }
     bool wants = macro_.phase == MacroPhase::Playing || !(leases_.state(now) == PadState{});
-    if (!wants) return attached_;
+    const uint64_t now_ms = now * 1000 / p_.freq();
+    if (!wants) return attached_ && !detach_due(attached_, false, now_ms, last_active_);
+    last_active_ = now_ms;
     if (const char* why = input_refusal(now)) {
         if (macro_.phase == MacroPhase::Playing) macro_.stop(why);
         leases_.reset();
@@ -140,6 +145,10 @@ bool Service::status(Sink& out) {
         b.put(phase_name(macro_.phase));
         b.put(" sequence=");
         b.put(seq_len_ ? seq_name_ : "none");
+        b.put(" uptime_ms=");
+        b.put_u64(now * 1000 / freq);
+        b.put(" last_put=");
+        b.put(last_put_);
     }
     return reply(out, b.view());
 }
@@ -236,6 +245,146 @@ bool Service::do_records(Sink& out) {
         if (!reply(out, line.view())) return false;
     }
     return true;
+}
+
+bool Service::hash_file(const char* path, char hex[65], uint64_t& size) {
+    Sha256 h;
+    uint64_t off = 0;
+    size = 0;
+    while (true) {
+        long n = p_.read(path, off, file_buf_, kFileChunkMax, size);
+        if (n < 0) return false;
+        if (n == 0) break;
+        h.update(file_buf_, size_t(n));
+        off += uint64_t(n);
+        if (off >= size) break;
+    }
+    h.finish_hex(hex);
+    return true;
+}
+
+void Service::sweep_stage() {
+    struct Ctx {
+        Platform* p;
+        const char* dir;
+    };
+    auto sweep = [](void* ctx, const Platform::Entry& e) {
+        auto* c = static_cast<Ctx*>(ctx);
+        if (!e.dir && is_stage_file(e.name)) {
+            char path[320];
+            snprintf(path, sizeof path, "%s/%s", c->dir, e.name);
+            c->p->remove(path);
+        }
+    };
+    char dirs[kUpdateTargets.size() + 1][256];
+    size_t n = 0;
+    for (const auto& t : kUpdateTargets) {
+        size_t slash = t.path.rfind('/');
+        snprintf(dirs[n++], 256, "%.*s", int(slash), t.path.data());
+    }
+    snprintf(dirs[n++], 256, "%.*s", int(kDataDir.size()), kDataDir.data());
+    for (size_t i = 0; i < n; i++) {
+        Ctx c{&p_, dirs[i]};
+        p_.list(dirs[i], sweep, &c);
+    }
+}
+
+size_t Service::put_feed(const char* data, size_t n, Sink& out) {
+    if (!put_.active) return 0;
+    uint64_t want = put_.size - put_.received;
+    size_t take = n < want ? n : size_t(want);
+    if (take && !p_.write_at(put_.stage, put_.received, data, take)) {
+        put_.active = false;
+        p_.remove(put_.stage);
+        reply_err(out, "put_failed", "stage_write");
+        return n;  // the rest of this payload is discarded with the connection
+    }
+    put_.hash.update(data, take);
+    put_.received += take;
+    if (put_.received == put_.size) put_finish(out);
+    return take;
+}
+
+bool Service::put_finish(Sink& out) {
+    put_.active = false;
+    char got[65];
+    put_.hash.finish_hex(got);
+    if (std::string_view(got) != put_.expect) {
+        p_.remove(put_.stage);
+        logf("put %s refused: sha %s, expected %s", put_.target, got, put_.expect);
+        snprintf(last_put_, sizeof last_put_, "failed_sha");
+        return reply_err(out, "put_failed", "sha_mismatch");
+    }
+    // The stage reads back as sent before anything is replaced.
+    char staged[65];
+    uint64_t sz = 0;
+    if (!hash_file(put_.stage, staged, sz) || std::string_view(staged) != put_.expect || sz != put_.size) {
+        p_.remove(put_.stage);
+        snprintf(last_put_, sizeof last_put_, "failed_stage_readback");
+        return reply_err(out, "put_failed", "stage_readback");
+    }
+    char old[65] = "none", backup[300] = "none";
+    uint64_t old_size = 0;
+    bool had_old = hash_file(put_.target, old, old_size);
+    if (had_old) {
+        if (std::string_view(old) == put_.expect) {
+            p_.remove(put_.stage);
+            snprintf(last_put_, sizeof last_put_, "unchanged %.16s", old);
+            return reply(out, "OK put unchanged");
+        }
+        backup_path(put_.target, put_.expect, backup, sizeof backup);
+        p_.make_dirs(std::string(kBackupDir).c_str());
+        uint64_t off = 0, total = 0;
+        bool ok = true;
+        while (ok) {
+            long n = p_.read(put_.target, off, file_buf_, kFileChunkMax, total);
+            if (n <= 0) break;
+            ok = p_.write_at(backup, off, file_buf_, size_t(n));
+            off += uint64_t(n);
+            if (off >= total) break;
+        }
+        char bk[65];
+        uint64_t bsz = 0;
+        if (!ok || !hash_file(backup, bk, bsz) || std::string_view(bk) != old) {
+            p_.remove(put_.stage);
+            snprintf(last_put_, sizeof last_put_, "failed_backup");
+            return reply_err(out, "put_failed", "backup");
+        }
+    }
+    if (!p_.replace(put_.stage, put_.target)) {
+        p_.remove(put_.stage);
+        snprintf(last_put_, sizeof last_put_, "failed_swap");
+        return reply_err(out, "put_failed", "swap");
+    }
+    char after[65];
+    uint64_t asz = 0;
+    bool readback = hash_file(put_.target, after, asz) && std::string_view(after) == put_.expect;
+    if (!readback && had_old) {
+        // Put the old file back from its backup and say so.
+        char tmp[300];
+        snprintf(tmp, sizeof tmp, "%s.sr-stage", put_.target);
+        uint64_t off = 0, total = 0;
+        while (true) {
+            long n = p_.read(backup, off, file_buf_, kFileChunkMax, total);
+            if (n <= 0) break;
+            p_.write_at(tmp, off, file_buf_, size_t(n));
+            off += uint64_t(n);
+            if (off >= total) break;
+        }
+        p_.replace(tmp, put_.target);
+    }
+    logf("put %s old=%s new=%s backup=%s readback=%d", put_.target, old, put_.expect, backup, int(readback));
+    snprintf(last_put_, sizeof last_put_, "%s_%.16s", readback ? "ok" : "failed_readback", put_.expect);
+    if (!readback) return reply_err(out, "put_failed", "readback_restored");
+    LineBuf<512> b;
+    b.put("OK put old=");
+    b.put(old);
+    b.put(" new=");
+    b.put(put_.expect);
+    b.put(" backup=");
+    b.put(backup);
+    b.put(" readback=ok");
+    return reply(out, b.view());
 }
 
 bool Service::handle(Session& s, std::string_view line, Sink& out) {
@@ -346,6 +495,30 @@ bool Service::handle(Session& s, std::string_view line, Sink& out) {
             return reply(out, "OK");
         }
         case Method::Records: return do_records(out);
+        case Method::Put: {
+            put_ = PutState{};
+            update_target(r.key, put_.target, sizeof put_.target);
+            snprintf(put_.stage, sizeof put_.stage, "%s.sr-stage", put_.target);
+            std::memcpy(put_.expect, r.sha, sizeof put_.expect);
+            put_.size = r.size;
+            std::string_view tgt(put_.target);
+            p_.make_dirs(std::string(tgt.substr(0, tgt.rfind('/'))).c_str());
+            p_.remove(put_.stage);
+            put_.active = true;
+            return true;  // the reply follows the payload (put_feed)
+        }
+        case Method::Restart:
+        case Method::Shutdown: {
+            {
+                Guard g(p_);
+                leases_.reset();
+                macro_.stop(nullptr);
+            }
+            action_ = r.method == Method::Restart ? Action::Restart : Action::Shutdown;
+            logf("%s requested", r.method == Method::Restart ? "restart" : "shutdown");
+            reply(out, r.method == Method::Restart ? "OK restarting" : "OK shutting_down");
+            return false;  // the platform loop closes everything and acts
+        }
         case Method::Launch:
         case Method::Dismiss: {
             refresh_app();
