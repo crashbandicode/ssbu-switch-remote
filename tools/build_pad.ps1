@@ -41,7 +41,7 @@ systemd-run --user --scope -q -p MemoryMax=4G /usr/bin/timeout 1800 nice -n 19 i
 systemd-run --user --scope -q -p MemoryMax=4G /usr/bin/timeout 1800 nice -n 19 ionice -c 3 idf.py build
 "@
     $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($sh))
-    & ssh @ssh $BuildHost "echo $b64 | base64 -d > ~/$remote/build.sh; /usr/bin/bash ~/$remote/build.sh > ~/$remote/build.log 2>&1; echo exit=`$? >> ~/$remote/build.log"
+    & ssh @ssh $BuildHost "echo $b64 | base64 -d > ~/$remote/build.sh; /usr/bin/bash ~/$remote/build.sh *> ~/$remote/build.log; 'exit=' + `$LASTEXITCODE | Add-Content ~/$remote/build.log"  # the login shell is pwsh
     & scp -q @ssh "${BuildHost}:$remote/build.log" (Join-Path $Out 'build.log')
     $tail = Get-Content (Join-Path $Out 'build.log') -Tail 1
     if ($tail -ne 'exit=0') { throw "idf.py build failed ($tail); see $Out/build.log" }
