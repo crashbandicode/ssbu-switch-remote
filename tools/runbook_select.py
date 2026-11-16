@@ -29,7 +29,7 @@ RUNBOOK = Path('/home/user/smash-training-lobby/artifacts/switch-hw-runbook')
 TR_REPO = Path('/home/user/tr-fixes-20261113/a-full')
 ID = r'[A-Z]+-\d+[A-Za-z]?|F\d\d'
 HEAD_RE = re.compile(rf'^###\s+({ID})\s+(.*)$')
-FIELD_RE = re.compile(r'^\s*-\s+\*\*(Class|Code paths|Est|Fixture|Pilot|Covered by|Replaces|Page|Start gate):\*\*\s*(.*)$')
+FIELD_RE = re.compile(r'^\s*-\s+\*\*(Class|Code paths|Est|Fixture|Pilot|Covered by|Replaces|Page|Start gate|Release):\*\*\s*(.*)$')
 
 
 def load_globs(path):
@@ -58,7 +58,7 @@ def load_rows(runbook):
             if m:
                 cur = {'id': m.group(1), 'name': m.group(2).strip(), 'file': md.name, 'class': '', 'paths': [],
                        'est': None, 'covered_by': 'self', 'replaces': None, 'page': None, 'fixture': '',
-                       'start_gate': ''}
+                       'start_gate': '', 'release': None}
                 rows.append(cur)
                 continue
             if cur is None:
@@ -85,6 +85,8 @@ def load_rows(runbook):
                 cur['fixture'] = val
             elif key == 'Start gate':
                 cur['start_gate'] = val
+            elif key == 'Release':
+                cur['release'] = val.split()[0] if val else None
     return [r for r in rows if r['paths'] or r['class']]
 
 

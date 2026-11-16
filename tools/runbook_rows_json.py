@@ -14,7 +14,15 @@ groups (`## G..` headings). Each row's hwstep token lists (the text after ` -- `
   page:<TR page>         -> hooks/tr_page.py:goto (the menu open on that page, found from the lit page tab)
   route:<hook>           -> routes:<hook> (harness-lib switch_boot / switch_to_training / switch_close)
   press home|capture     -> routes:switch_close (HOME can't be in a pad macro); listed under home_in_row
-Each command line's input steps are wrapped in a gif step (preset "evidence", length from its sleeps, <= 120 s).
+Evidence (--evidence session, the default): ONE continuous OBS recording for the whole run (plan "session_recording";
+the runner marks every row start/end and shot in <out>/recording.jsonl) and no gif steps; tools/session_cut.py cuts
+clips and stills offline. --evidence gif keeps the old wrapper (one gif step per command line, <= 120 s; ~7 s each
+on hardware).
+Waits (poll_rewrite, off with --no-poll): the sleep after `press b+up 100` becomes the tr-menu gate; the sleep before
+a still with a LIVE reference (refs/live-refs.json) becomes that dim-tolerant image gate (an in-session verdict);
+sleeps (<= 2 s) after a row's last input go, since the next row starts on a gate. A `gate:NAME:S` token waits on
+gate NAME (S = the sleep it replaced, kept inside a held input).
+Estimate: <out stem>.estimate.json, every runner row through the measured hardware cost model (COST).
 Menu page: a row that starts on the Training HUD or on an open menu gets a goto step to its page (`- **Page:**`,
 else the ID prefix, else the Fixture/Start gate text) when the page changes, when the row before may have turned
 pages (an L/R press), or when it starts with the menu open. A row whose start gate is another row's screen (a
@@ -42,16 +50,137 @@ PREFIX_PAGE = {'CPU': 'CPU', 'SAV': 'Saves', 'REC': 'Recording', 'FS': 'Fighters
 PILOT_PAGE = {'F01': 'Display & Controls', 'F02': 'Display & Controls', 'F03': 'Display & Controls',
               'F04': 'Display & Controls', 'F06': 'Recording', 'F07': 'Recording', 'F08': 'Recording',
               'F09': 'Recording', 'F10': None, 'F11': 'Recording'}
-TR_SEGMENTS = {'tr-open': [{'buttons': 'b+up', 'hold': 100, 'gap': 1.0}],
-               'tr-r': [{'buttons': 'r', 'hold': 100, 'gap': 0.6}],
-               'tr-b': [{'buttons': 'b', 'hold': 100, 'gap': 1.0}]}
+# Short gaps: tr_page.py reads the lit tab after each press and polls (goto: 4 looks, 0.4 s apart), so the gap is
+# only the press settling, not a wait for the screen.
+TR_SEGMENTS = {'tr-open': [{'buttons': 'b+up', 'hold': 100, 'gap': 0.35}],
+               'tr-r': [{'buttons': 'r', 'hold': 100, 'gap': 0.45}],
+               'tr-b': [{'buttons': 'b', 'hold': 100, 'gap': 0.5}]}
 # The harness-lib hw-training reference (library/routes/refs/hw-refs.json, the "Total Damage" label of the Training
-# panel), copied into the runbook's refs/ so the plan is self-contained.
-TRAINING_GATE = {'kind': 'image', 'reference': 'refs/hw-training.png',
+# panel), copied into the runbook's refs/ so the plan is self-contained. Checked by hooks/tr_page.py:image_gate, the
+# dim-tolerant compare (harness-lib routes.dim_compare + structure_ok): the runner's own image gate compares absolute
+# pixels, which the console's auto-dimmed screen fails (hw-run-2 F04, 2026-11-16).
+TRAINING_GATE = {'kind': 'hook', 'module': HOOK, 'function': 'image_gate', 'reference': 'refs/hw-training.png',
                  'sha256': 'ebe8cabbd0a9b27fb256bf5ad10a75eea3b331721200e50d4e89873009bbf458',
-                 'roi': [1096, 142, 1238, 176], 'reference_is_roi': True, 'frame': [1280, 720], 'scale': 'fit',
-                 'tolerance': 18, 'cap': 30}
-MENU_GATE = {'kind': 'hook', 'module': HOOK, 'function': 'menu_open_gate', 'cap': 10}
+                 'roi': [1096, 142, 1238, 176], 'frame': [1280, 720], 'tolerance': 18, 'cap': 30, 'interval': 0.25}
+MENU_GATE = {'kind': 'hook', 'module': HOOK, 'function': 'menu_open_gate', 'cap': 10, 'interval': 0.25}
+# One continuous OBS recording per session (harness-lib runner, playbook a80d514): no per-command gif steps; clips and
+# stills are cut offline from <out>/recording.jsonl (tools/session_cut.py).
+SESSION_RECORDING = {'marks': ['row-start', 'row-end', 'shot'], 'chapters': True, 'log': 'recording.jsonl'}
+LIVE_REFS = 'refs/live-refs.json'
+LIVE_CAP = 8
+
+# The measured hardware cost model (hw-run-2 actions.jsonl 2026-11-16 13:08-13:12Z, hw-proof-1, pilot receipts).
+COST = {'play': 0.15,        # macro.play upload + completion poll beyond the macro's own frames (median 0.13 s)
+        'shot': 0.15,        # OBS GetSourceScreenshot round trip, 1080p PNG (0.06-0.2 s)
+        'mark': 0.05,        # session_mark: one GetRecordStatus
+        'gate': 0.25,        # an image/hook gate that passes on its first poll
+        'menu_gate': 0.45,   # tr-menu after B+Up: the menu needs ~0.2-0.3 s to draw, then one poll
+        'goto': 2.4,         # home (closed: one look + gate) + tr-open + one look + final look
+        'goto_r': 0.7,       # each R page turn (tr-r) inside a goto
+        'goto_close': 0.9,   # open=False: tr-b + the training gate
+        'gif': 7.0,          # gif mode only: recording.start + stop + mp4 finalize + gif publish
+        'run': 0.3}          # another checking hook
+ROUTE_COST = {'routes:switch_boot': 101.0, 'routes:switch_to_training': 39.0, 'routes:switch_close': 4.0}
+MENU_OPEN = 'press b+up 100'
+TRAILING_MAX = 2.0
+
+
+def poll_rewrite(row_id, token_lists, live=None):
+    """Fixed sleeps -> gate polling where a gate exists (the runner proceeds the moment the gate matches):
+      1. the sleep right after `press b+up 100` (the TR menu opening; every executed row expects it to open) becomes
+         the tr-menu gate (the lit page tab, polled every 0.25 s);
+      2. the sleep right before a still that has a LIVE reference (refs/live-refs.json: row, still label) becomes that
+         image gate: the row is verdicted in session, and it moves on as soon as the screen matches;
+      3. the sleeps after the last input of the row's last command go: the next row starts on a gate (the Training
+         HUD reference or the goto hook), which polls instead.
+    Returns (new token lists, {'menu': n, 'live': [(label, gate)], 'trailing_s': s})."""
+    live = live or {}
+    stats = {'menu': 0, 'live': [], 'trailing_s': 0.0}
+    out = []
+    for li, toks in enumerate(token_lists):
+        new = []
+        i = 0
+        while i < len(toks):
+            t = toks[i]
+            if t == MENU_OPEN and i + 1 < len(toks) and toks[i + 1].startswith('sleep:'):
+                new += [t, f'gate:tr-menu:{toks[i + 1][6:]}']
+                stats['menu'] += 1
+                i += 2
+                continue
+            if t.startswith('sleep:') and i + 1 < len(toks) and toks[i + 1].startswith('still:') \
+                    and (row_id, toks[i + 1][6:]) in live:
+                gate = live[(row_id, toks[i + 1][6:])]
+                new.append(f'gate:{gate}:{t[6:]}')
+                stats['live'].append((toks[i + 1][6:], gate))
+                i += 1
+                continue
+            if t.startswith('still:') and (row_id, t[6:]) in live and not (
+                    new and new[-1].startswith(f'gate:{live[(row_id, t[6:])]}:')):
+                gate = live[(row_id, t[6:])]
+                new.append(f'gate:{gate}:0')
+                stats['live'].append((t[6:], gate))
+            new.append(t)
+            i += 1
+        out.append(new)
+    if out:  # 3. sleeps after the last input or still of the last command line
+        last = out[-1]
+        k = len(last)
+        while k and last[k - 1].startswith('sleep:'):
+            k -= 1
+        trailing = sum(float(t[6:]) for t in last[k:])
+        if trailing <= TRAILING_MAX:  # longer ones wait out a load (fighter, stage) the HUD gate can't see
+            stats['trailing_s'] = trailing
+            out[-1] = last[:k]
+    return out, stats
+
+
+def load_live(rb):
+    """{(row, still label): gate name} and the gate specs, from refs/live-refs.json (only references kept by the
+    cross-check of refs/build_live_refs.py)."""
+    path = Path(rb) / LIVE_REFS
+    if not path.is_file():
+        return {}, {}
+    manifest = json.loads(path.read_text())
+    where, gates = {}, {}
+    for name, ref in manifest.items():
+        if ref.get('verdict') != 'kept':
+            continue
+        gates[name] = {'kind': 'hook', 'module': HOOK, 'function': 'image_gate', 'reference': ref['reference'],
+                       'sha256': ref['sha256'], 'roi': ref['roi'], 'frame': [1280, 720],
+                       'tolerance': ref['tolerance'], 'cap': LIVE_CAP, 'interval': 0.25, 'live_verdict': ref['proves']}
+        for row, label in ref.get('rows', []):
+            where[(row, label)] = name
+    return where, gates
+
+
+def model_seconds(row, segments):
+    """A runner row's modelled wall time from its steps (COST above; macros at 60 frames per second)."""
+    total = 0.0
+
+    def walk(steps):
+        nonlocal total
+        for s in steps:
+            if 'gif' in s:
+                total += COST['gif']
+                walk(s['gif'].get('steps', []))
+            elif 'play' in s:
+                seg = segments.get(s['play'], {})
+                total += COST['play'] + sum(a.get('frames', 0) + a.get('gap_frames', 0)
+                                            for a in seg.get('recipe', [])) / FPS
+            elif 'shot' in s:
+                total += COST['shot'] + COST['mark']
+            elif 'gate' in s:
+                total += COST['menu_gate'] if s['gate'] == 'tr-menu' else COST['gate']
+            elif 'wait_ms' in s:
+                total += s['wait_ms'] / 1000
+            elif 'run' in s:
+                if s['run'].endswith(':goto'):
+                    total += COST['goto'] + COST['goto_r'] * s.get('est_r', 1) + \
+                        (0 if s['args'].get('open') else COST['goto_close'])
+                else:
+                    total += ROUTE_COST.get(s['run'], COST['run'])
+    walk(row['steps'])
+    return total + 2 * COST['mark']
 HOME_ROWS = []
 # harness-lib routes hooks (playbook tools/eden-runner, 1bd4ae1) boot and end the session. routes:tr_menu is not used:
 # its hw-tr-menu reference is the Display & Controls key-hint line, and the menu opens on the page used last.
@@ -261,8 +390,8 @@ def macro_doc(name, intervals, game_id='01006A800016E000'):
 
 
 class Builder:
-    def __init__(self, acquire=False, base=None):
-        self.acquire, self.base = acquire, base
+    def __init__(self, acquire=False, base=None, gifs=False):
+        self.acquire, self.base, self.gifs = acquire, base, gifs
         self.segments, self.gates = {}, {}
         self.held_stills = []  # stills taken while a lease is held: the gif shows them (a shot would end the hold)
 
@@ -300,16 +429,27 @@ class Builder:
         def close_gif():
             nonlocal inner
             flush()
-            if inner:
+            if inner and self.gifs:
                 length = min(120, max(10, int(math.ceil(seconds(toks))) + 5))
                 out.append({'gif': {'name': f'{row_id}-c{n}', 'preset': 'evidence', 'length': length,
                                     'steps': inner}})
+            elif inner:  # session evidence: the steps run bare; the one session recording is the clip
+                out.extend(inner)
             inner = []
 
         for t in toks:
             line = tl[0]
             if t.startswith('sleep:'):
                 line.t += int(round(float(t[6:]) * 1000))
+            elif t.startswith('gate:'):  # poll_rewrite: wait on a gate instead of a fixed sleep (gate:NAME:S)
+                name, _, was = t[5:].partition(':')
+                if line.busy() and line.end() - line.t <= 300:
+                    line.t = line.end()  # the press just sent (a 100 ms tap) completes, then the gate polls
+                if line.busy():  # inside a held input a gate would end the hold: keep the original sleep
+                    line.t += int(round(float(was or 0) * 1000))
+                    continue
+                flush()
+                inner.append({'gate': name})
             elif t.startswith('still:'):
                 g = f'{row_id}-{t[6:]}'
                 if line.busy():
@@ -406,6 +546,11 @@ def main(argv=None):
     ap.add_argument('--only', help='comma-separated row ids to run (runbook_select.py --ids); default: all')
     ap.add_argument('--acquire', action='store_true',
                     help='stills become acquire-on-first-run image gates (a REVIEW stop after each new row)')
+    ap.add_argument('--evidence', choices=['session', 'gif'], default='session',
+                    help='session (default): one continuous OBS recording (plan "session_recording"), no gif steps; '
+                         'gif: the old per-command gif wrappers')
+    ap.add_argument('--no-poll', action='store_true',
+                    help='keep every fixed sleep (no tr-menu / live-reference gates, no trailing-sleep drop)')
     a = ap.parse_args(argv)
     rb = Path(a.runbook)
     rows = rs.load_rows(rb)
@@ -414,7 +559,7 @@ def main(argv=None):
     texts = {md.name: md.read_text() for md in (rb / 'rows').glob('*.md')}
     pilot_text = Path(a.pilot).read_text() if Path(a.pilot).exists() else ''
     session_text, groups = parse_session(rb)
-    t_ids = [m.group(1) for m in re.finditer(r'^###\s+(T-\d+[A-Za-z]?)\s', session_text, re.M)]
+    t_ids = [m.group(1) for m in re.finditer(r'^###\s+((?:T|SC)-\d+[A-Za-z]?)\s', session_text, re.M)]
 
     covers, _ = rs.resolve({r['id']: r for r in rows}, rows)  # Covered-by chains and pilot aliases followed
     covers = {k: covers[k] for k in sorted(covers, key=lambda k: [r['id'] for r in rows].index(k)
@@ -458,14 +603,24 @@ def main(argv=None):
         run_ids = [i for i in run_ids if i in keep]
 
     out = Path(a.out) if a.out else rb / 'rows.json'
-    b = Builder(acquire=a.acquire, base=out.parent)
+    gifs = a.evidence == 'gif'
+    b = Builder(acquire=a.acquire, base=out.parent, gifs=gifs)
     plan = {'game_id': '01006A800016E000', 'start': 'home-ssbu-selected', 'backend': 'hardware',
             'source': 'switch-hw-runbook (generated by ssbu-switch-remote/tools/runbook_rows_json.py)',
             'segments': {}, 'gates': {'training': dict(TRAINING_GATE), 'tr-menu': dict(MENU_GATE)},
             'recover': [{'run': f'{HOOK}:home', 'check': True}], 'rows': []}
+    if not gifs:
+        plan['session_recording'] = dict(SESSION_RECORDING)
+    live_where, live_gates = ({}, {}) if (a.no_poll or a.acquire) else load_live(rb)
+    plan['gates'].update(live_gates)
     for name, recipe in TR_SEGMENTS.items():
         b.segments[name] = {'recipe': recipe, 'cap': 15}
     missing, unordered, gotos, merged = [], [], 0, {}
+    polled = {'menu_gates': 0, 'live_gates': {}, 'trailing_s_dropped': 0.0}
+    # a group "## ... (showcase:NAME)": the ids of its "Run order:" line (not ids its prose mentions)
+    showcase = {i: m.group(1) for m in re.finditer(r'^## .*\(showcase:([\w-]+)\)\s*\n+Run order: (.*)$', session_text,
+                                                   re.M) for i in re.findall(rf'\b({rs.ID})\b', m.group(2))}
+    r_presses = {}
     cur_page, dirty = None, True
     out_rows = []
     for rid in run_ids:
@@ -475,7 +630,14 @@ def main(argv=None):
             continue
         if rid not in order:
             unordered.append(rid)
-        steps = b.body(rid, m['toks'])
+        toks = m['toks']
+        if not a.no_poll:
+            toks, st = poll_rewrite(rid, toks, live_where)
+            polled['menu_gates'] += st['menu']
+            polled['trailing_s_dropped'] += st['trailing_s']
+            if st['live']:
+                polled['live_gates'][rid] = st['live']
+        steps = b.body(rid, toks)
         if m['start'] == 'chain' and out_rows:
             host = out_rows[-1]
             host['covers'] = sorted(set(host['covers']) | {rid, *covers[rid]})
@@ -488,14 +650,21 @@ def main(argv=None):
             if page and (start == 'tr-menu' or dirty or page != cur_page):
                 pre.append({'run': f'{HOOK}:goto', 'args': {'page': page, 'open': start == 'tr-menu'}, 'check': True})
                 gotos += 1
+                # the menu reopens on the page used last: R presses from there (unknown after a page turn: 2)
+                r_presses[rid] = (PAGES.index(page) - PAGES.index(cur_page)) % len(PAGES) \
+                    if cur_page in PAGES and not dirty else 2
                 start = 'training'  # goto starts with home: it reaches the Training HUD from any TR screen
             elif start == 'tr-menu':
                 pre.append({'gate': 'tr-menu'})
             else:
                 start = 'training'
                 pre.append({'gate': 'training'})
+            if rid in showcase:  # SESSION.md group "(showcase:NAME)": a mark + showcase.jsonl line as it starts
+                pre.insert(0, {'run': f'{HOOK}:showcase', 'args': {'name': showcase[rid], 'row': rid}})
             row = {'id': rid, 'name': m['name'], 'covers': sorted(covers[rid]), 'start': start, 'chained': [],
                    'steps': pre + steps}
+            if rid in showcase:
+                row['showcase'] = showcase[rid]
             if start == 'tr-menu':
                 row['recover'] = [{'run': f'{HOOK}:home', 'check': True}, {'play': 'tr-open', 'unchecked': True}]
             out_rows.append(row)
@@ -512,7 +681,8 @@ def main(argv=None):
             row['start'] = rows_out[i - 1]['end']
         if not row.get('chained'):
             row.pop('chained', None)
-        row.setdefault('evidence', [f'{row["id"]} gifs and shots'])
+        row.setdefault('evidence', [f'{row["id"]} gifs and shots' if gifs else
+                                    f'{row["id"]} shots; clip cut offline from the session recording'])
     plan['rows'] = rows_out
     plan['segments'] = b.segments
     plan['gates'].update(b.gates)
@@ -522,10 +692,23 @@ def main(argv=None):
         if prev and prev.get('recipe') == seg['recipe'] and prev.get('file') and (out.parent / prev['file']).is_file():
             seg.update({k: prev[k] for k in ('file', 'sha256', 'compiled') if k in prev})
     out.write_text(json.dumps(plan, indent=1) + '\n')
+    # the measured cost model, per runner row (estimate.json beside rows.json; RUNBOOK.md / SESSION.md quote it)
+    est = {}
+    for row in rows_out:
+        s = model_seconds(row, plan['segments'])
+        s += COST['goto_r'] * (r_presses.get(row['id'], 0) - 1) * any(
+            st.get('run', '').endswith(':goto') for st in row['steps'])
+        est[row['id']] = round(s, 1)
+    est_path = out.with_name(out.stem + '.estimate.json')
+    est_path.write_text(json.dumps({'cost_model': COST, 'route_cost': ROUTE_COST, 'evidence': a.evidence,
+                                    'total_s': round(sum(est.values())), 'rows': est}, indent=1) + '\n')
     print(json.dumps({'out': str(out), 'rows': len(plan['rows']), 'segments': len(plan['segments']),
                       'gates': len(plan['gates']), 'goto_steps': gotos, 'chained': merged,
                       'no_commands': missing, 'not_in_session': unordered, 'held_for_operator': sorted(held),
                       'home_in_row': sorted(set(HOME_ROWS)), 'stills_in_a_hold': b.held_stills,
+                      'evidence': a.evidence, 'menu_gates': polled['menu_gates'],
+                      'live_gates': polled['live_gates'], 'trailing_s_dropped': round(polled['trailing_s_dropped'], 1),
+                      'model_total_s': round(sum(est.values())), 'model_total_h': round(sum(est.values()) / 3600, 2),
                       'plan_sha256': hashlib.sha256(out.read_bytes()).hexdigest()}))
     return 0
 
