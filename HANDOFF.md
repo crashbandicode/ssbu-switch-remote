@@ -10,6 +10,12 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **~14:00Z SESSION ORDER (the operator): newest first.** First after boot: (a) quicker CPU cycling (Character Cycles,
+  several cycles), (b) Eggs-ercise, (c) Break the Targets, (d) input drills (record/make/crop/grading appearing), then
+  the LEG-* legend checks, then everything else newest → oldest by introducing release. During the session: post an INBOX
+  line with PASS/FAIL as each of (a)-(d) finishes (`showcase:` row-end marks); cut their GIFs first (mid-recording if
+  OBS's file is readable, else first after the session). Post the first 15 rows with the session start. The
+  compression worker is re-ordering SESSION.md/rows.json.
 - **~13:55Z CURRENT PLAN (the primary): ONE full session on TR rc.15 + LEGEND change; NO more mini-runs.**
   1. Wait for INBOX "LEGEND RELEASE READY" (rc15-crop-editor-sol: NRO + sha + size + check list). A background watcher is
      armed in this session.
