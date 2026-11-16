@@ -3,15 +3,17 @@
   runbook_select.py <git-range> [--repo TR_REPO] [--runbook DIR] [--json] [--files f1 f2 ...]
 
 <git-range> is anything `git diff --name-only` accepts (e.g. `35268287..HEAD`, `abc123^!`). With --files the changed
-paths are given directly (no git). The row -> code-path map is read from the runbook's `rows/*.md`: each
-`### <ID> <name>` section's `- **Code paths:**` line (backticked globs, relative to the TR repo root) and `- **Class:**`.
+paths are given directly (no git). The catalog is the runbook's `rows/*.md`: each `### <ID> <name>` section's
+`- **Code paths:**` (backticked globs, relative to the TR repo root), `- **Class:**`, `- **Est:**` and
+`- **Covered by:**` (`self` = executed row; `<ID>` = covered by that representative; `pilot F0x` = the 12-row pilot).
 
 Rules (conservative):
-  1. a changed file matching a row's Code paths selects that row;
-  2. a changed file matching `select-all.txt` (shared/core, build, data) selects EVERY row;
+  1. a changed file matching a row's Code paths selects that catalog row;
+  2. a changed file matching `select-all.txt` (shared/core, build, data) selects EVERY catalog row;
   3. a changed file matching `ignore.txt` (docs, host tests, tools, emulator harness) selects nothing;
-  4. any other changed file (unmapped) selects EVERY row and is reported, so the map can be extended.
-Exit 0; the output lists HW rows to run, then non-HW rows touched (PERF-EXCLUDED / NEEDS-ONLINE / NEEDS-2P).
+  4. any other changed file (unmapped) selects EVERY catalog row and is reported, so the map can be extended.
+Selected catalog rows resolve to the rows to EXECUTE through `Covered by`; the run list follows the order of the
+one-session script `SESSION.md` (row IDs in order of first appearance) when it exists.
 """
 import argparse
 import json
@@ -22,14 +24,26 @@ from pathlib import Path, PurePosixPath
 
 RUNBOOK = Path('/home/user/smash-training-lobby/artifacts/switch-hw-runbook')
 TR_REPO = Path('/home/user/tr-fixes-20261113/a-full')
-HEAD_RE = re.compile(r'^###\s+([A-Z]+-?\d+[A-Za-z]?)\s+(.*)$')
-FIELD_RE = re.compile(r'^\s*-\s+\*\*(Class|Code paths|Est|Fixture|Session|Pilot):\*\*\s*(.*)$')
+ID = r'[A-Z]+-\d+[A-Za-z]?|F\d\d'
+HEAD_RE = re.compile(rf'^###\s+({ID})\s+(.*)$')
+FIELD_RE = re.compile(r'^\s*-\s+\*\*(Class|Code paths|Est|Fixture|Pilot|Covered by):\*\*\s*(.*)$')
 
 
 def load_globs(path):
     if not path.exists():
         return []
     return [ln.strip() for ln in path.read_text().splitlines() if ln.strip() and not ln.lstrip().startswith('#')]
+
+
+def parse_cover(val):
+    v = val.replace('`', '').strip()
+    m = re.match(r'(?i)pilot\s+(F\d\d)', v)
+    if m:
+        return m.group(1).upper()
+    m = re.match(rf'({ID})', v)
+    if m:
+        return m.group(1)
+    return 'self'
 
 
 def load_rows(runbook):
@@ -40,7 +54,7 @@ def load_rows(runbook):
             m = HEAD_RE.match(line)
             if m:
                 cur = {'id': m.group(1), 'name': m.group(2).strip(), 'file': md.name, 'class': '', 'paths': [],
-                       'est': None, 'session': ''}
+                       'est': None, 'covered_by': 'self'}
                 rows.append(cur)
                 continue
             if cur is None:
@@ -56,17 +70,26 @@ def load_rows(runbook):
             elif key == 'Est':
                 n = re.search(r'\d+', val)
                 cur['est'] = int(n.group()) if n else None
-            elif key == 'Session':
-                cur['session'] = val
+            elif key == 'Covered by':
+                cur['covered_by'] = parse_cover(val)
     return [r for r in rows if r['paths'] or r['class']]
+
+
+def session_order(runbook):
+    p = runbook / 'SESSION.md'
+    if not p.exists():
+        return {}
+    order = {}
+    for tok in re.findall(rf'\b({ID})\b', p.read_text()):
+        order.setdefault(tok, len(order))
+    return order
 
 
 def matches(path, glob):
     p = PurePosixPath(path)
     if p.full_match(glob):
         return True
-    # a bare directory glob (`src/runtime/ui/`) or a directory name means everything under it
-    g = glob.rstrip('/')
+    g = glob.rstrip('/')  # a bare directory (`src/runtime/ui/`) means everything under it
     return '*' not in g and (path == g or path.startswith(g + '/'))
 
 
@@ -98,6 +121,23 @@ def select(changed, rows, select_all, ignore):
     return picked, why, {'shared': shared, 'unmapped': unmapped, 'ignored': ignored, 'all_rows': every}
 
 
+def resolve(picked, rows):
+    """Selected catalog rows -> the rows to execute. HW rows resolve through Covered by (a chain is followed);
+    non-HW rows are reported, never executed."""
+    by_id = {r['id']: r for r in rows}
+    run, non_hw = {}, []
+    for r in picked.values():
+        if kind(r['class']) != 'HW':
+            non_hw.append(r)
+            continue
+        target, seen = r['id'], set()
+        while target in by_id and by_id[target]['covered_by'] != 'self' and target not in seen:
+            seen.add(target)
+            target = by_id[target]['covered_by']
+        run.setdefault(target, []).append(r['id'])
+    return run, non_hw
+
+
 def changed_files(repo, rng):
     out = subprocess.run(['git', '-C', str(repo), 'diff', '--name-only', rng], capture_output=True, text=True)
     if out.returncode != 0:
@@ -118,30 +158,33 @@ def main(argv=None):
         ap.error('give a git range or --files')
     changed = a.files if a.files is not None else changed_files(a.repo, a.range)
     rows = load_rows(runbook)
+    by_id = {r['id']: r for r in rows}
     picked, why, info = select(changed, rows, load_globs(runbook / 'select-all.txt'), load_globs(runbook / 'ignore.txt'))
-    order = {r['id']: i for i, r in enumerate(rows)}
-    sel = sorted(picked.values(), key=lambda r: order[r['id']])
-    hw = [r for r in sel if kind(r['class']) == 'HW']
-    other = [r for r in sel if kind(r['class']) != 'HW']
-    result = {'range': a.range, 'changed': len(changed), 'rows_total': len(rows), **info,
-              'hw': [{'id': r['id'], 'name': r['name'], 'session': r['session'], 'est_s': r['est'],
-                      'because': why[r['id']][:3]} for r in hw],
-              'non_hw': [{'id': r['id'], 'class': r['class']} for r in other],
-              'hw_est_min': round(sum(r['est'] or 0 for r in hw) / 60, 1)}
+    run, non_hw = resolve(picked, rows)
+    order = session_order(runbook)
+    run_ids = sorted(run, key=lambda i: (order.get(i, 10 ** 6), i))
+    est = sum((by_id[i]['est'] or 0) for i in run_ids if i in by_id)
+    result = {'range': a.range, 'changed': len(changed), 'catalog_rows': len(rows), 'catalog_selected': len(picked),
+              **info, 'run': [{'id': i, 'name': by_id[i]['name'] if i in by_id else '(pilot row, ledger PLAN.md)',
+                               'covers': sorted(run[i]), 'est_s': by_id[i]['est'] if i in by_id else None}
+                              for i in run_ids],
+              'non_hw': [{'id': r['id'], 'class': r['class']} for r in non_hw], 'run_est_min': round(est / 60, 1)}
     if a.json:
         print(json.dumps(result, indent=1))
         return 0
-    print(f"range {a.range or '(files)'}: {len(changed)} changed file(s); runbook rows {len(rows)}")
+    print(f"range {a.range or '(files)'}: {len(changed)} changed file(s); catalog {len(rows)} rows, "
+          f"{len(picked)} selected")
     if info['all_rows']:
         print(f"ALL ROWS selected: shared={info['shared'][:5]} unmapped={info['unmapped'][:5]}")
-    print(f"HW rows to run: {len(hw)} (~{result['hw_est_min']} min)")
-    for r in hw:
-        print(f"  {r['id']:8} {r['session'] or '-':10} {r['name']}   <- {', '.join(why[r['id']][:2])}")
-    if other:
-        print(f"non-HW rows touched (not run on hardware): {len(other)}")
-        for r in other:
+    print(f"rows to EXECUTE (session order): {len(run_ids)} (~{result['run_est_min']} min)")
+    for i in run_ids:
+        name = by_id[i]['name'] if i in by_id else '(pilot row)'
+        print(f"  {i:8} {name}   covers {len(run[i])}: {', '.join(sorted(run[i])[:6])}")
+    if non_hw:
+        print(f"non-HW catalog rows touched (not run on hardware): {len(non_hw)}")
+        for r in non_hw:
             print(f"  {r['id']:8} {r['class']}")
-    if info['ignored'] and not hw:
+    if info['ignored'] and not run_ids:
         print(f"ignored only: {info['ignored'][:5]}")
     return 0
 

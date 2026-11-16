@@ -80,6 +80,69 @@ class Rules(unittest.TestCase):
         self.assertEqual(self.pick(['src/runtime/lobby/custom_stages.rs'])[0], ['FS-09'])
 
 
+COVER_ROWS = """### CPU-01 CPU level: 1
+- **Class:** HW
+- **Covered by:** `CPU-03`
+- **Code paths:** `src/runtime/features/cpu_level.rs`
+### CPU-02 CPU level: 5
+- **Class:** HW
+- **Covered by:** CPU-03
+- **Code paths:** `src/runtime/features/cpu_level.rs`
+### CPU-03 CPU level: 9
+- **Class:** HW
+- **Est:** 40
+- **Covered by:** self
+- **Code paths:** `src/runtime/features/cpu_level.rs`
+### DC-05 Hitbox key
+- **Class:** HW
+- **Covered by:** pilot F02
+- **Code paths:** `src/runtime/ui/legend.rs`
+### DC-06 Input delay
+- **Class:** PERF-EXCLUDED (input delay)
+- **Covered by:** self
+- **Code paths:** `src/runtime/ui/legend.rs`
+"""
+
+
+class Coverage(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        d = Path(self.tmp.name)
+        (d / 'rows').mkdir()
+        (d / 'rows' / 'c.md').write_text(COVER_ROWS)
+        (d / 'SESSION.md').write_text('1. F02 (pilot)\n2. CPU-03 level 9\n')
+        self.d = d
+        self.rows = rs.load_rows(d)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_covered_rows_resolve_to_their_representative(self):
+        p, _, _ = rs.select(['src/runtime/features/cpu_level.rs'], self.rows, [], [])
+        run, non_hw = rs.resolve(p, self.rows)
+        self.assertEqual(sorted(run), ['CPU-03'])
+        self.assertEqual(sorted(run['CPU-03']), ['CPU-01', 'CPU-02', 'CPU-03'])
+
+    def test_pilot_cover_and_perf_excluded(self):
+        p, _, _ = rs.select(['src/runtime/ui/legend.rs'], self.rows, [], [])
+        run, non_hw = rs.resolve(p, self.rows)
+        self.assertEqual(sorted(run), ['F02'])
+        self.assertEqual([r['id'] for r in non_hw], ['DC-06'])
+
+    def test_session_order(self):
+        order = rs.session_order(self.d)
+        self.assertLess(order['F02'], order['CPU-03'])
+
+    def test_cli_json(self):
+        import io, contextlib, json
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rs.main(['--runbook', str(self.d), '--json', '--files', 'src/runtime/features/cpu_level.rs'])
+        out = json.loads(buf.getvalue())
+        self.assertEqual([r['id'] for r in out['run']], ['CPU-03'])
+        self.assertEqual(out['run_est_min'], 0.7)
+
+
 REPO = rs.TR_REPO
 REAL = rs.RUNBOOK / 'rows'
 
