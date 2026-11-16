@@ -289,7 +289,8 @@ class SwitchClient:
             return self.recording_stop()
         if method == 'recording.status':
             return self._capd('recording.status')
-        if method in ('recording.session_start', 'recording.session_mark', 'recording.session_stop'):
+        if method in ('recording.session_start', 'recording.session_mark', 'recording.session_split',
+                      'recording.session_stop', 'recording.split_check'):
             if self._backend() != 'obs':
                 raise SwitchError('unsupported', f'{method} needs OBS (one continuous session recording)')
             return self._capd(method, p)

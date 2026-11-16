@@ -37,6 +37,13 @@ class FakeObs:
             {'inputName': 'Mic', 'inputKind': 'pulse_input_capture'},
             {'inputName': 'Switch', 'inputKind': 'v4l2_input', 'settings': {'device_id': '/dev/video4'}}]
         self.replay_dir = replay_dir
+        # per-row files: split_ack 'now' (RecordFileChanged right after the answer), 'late' (after the NEXT request's
+        # answer: a split acknowledged past the client's cap) or 'never'
+        self.split_ack, self.files, self.cur_path, self.deferred, self.event_subs = 'now', 0, None, [], None
+        self.output_settings = {'muxer_settings': '', 'path': '/x/2026-11-16 10-06-32.mp4'}
+        self.profile = {('Output', 'Mode'): 'Simple', ('Output', 'FilenameFormatting'): '%CCYY-%MM-%DD %hh-%mm-%ss',
+                        ('SimpleOutput', 'RecFormat2'): 'hybrid_mp4'}
+        self.has_split_request = True
         outer = self
 
         class H(socketserver.BaseRequestHandler):
@@ -81,6 +88,19 @@ class FakeObs:
             return None
         return json.loads(payload)
 
+    def new_file(self):
+        """The next recording file (written, so size checks see it)."""
+        self.files += 1
+        if not self.replay_dir:
+            return f'/home/x/obs/rec-{self.files}.mp4'
+        path = self.replay_dir / f'rec-{self.files}.mp4'
+        path.write_bytes(b'mp4' * self.files)
+        return str(path)
+
+    @staticmethod
+    def event(kind, data):
+        return {'op': 5, 'd': {'eventType': kind, 'eventIntent': 64, 'eventData': data}}
+
     def session(self, sock):
         f = sock.makefile('rb')
         head = b''
@@ -97,6 +117,7 @@ class FakeObs:
         if ident['d'].get('authentication') != obsws.auth_string(self.password, salt, challenge):
             sock.sendall(b'\x88\x02\x0f\xa8')  # close 4008 authentication failed
             return
+        self.event_subs = ident['d'].get('eventSubscriptions')
         self.send(sock, {'op': 2, 'd': {'negotiatedRpcVersion': 1}})
         while True:
             msg = self.recv(f)
@@ -104,7 +125,8 @@ class FakeObs:
                 return
             d = msg['d']
             self.calls.append((d['requestType'], d.get('requestData')))
-            ok, data = True, {}
+            ok, data, events, code = True, {}, list(self.deferred), None
+            self.deferred = []
             t = d['requestType']
             if t == 'GetInputList':
                 data = {'inputs': [{k: v for k, v in i.items() if k != 'settings'} for i in self.inputs]}
@@ -125,6 +147,11 @@ class FakeObs:
                         data = {'outputPath': str(path)}
                     else:
                         data = {'outputPath': '/home/x/obs/2026-11-15 22-00-00.mkv'}
+                    # like OBS 32.2: the STOPPED event names the recording's FIRST file, even after splits
+                    events.append(self.event('RecordStateChanged', {
+                        'outputActive': False, 'outputState': obsws.STOPPED,
+                        'outputPath': getattr(self, 'first_path', None) or data['outputPath']}))
+                    self.cur_path = None
             elif t == 'GetRecordStatus':
                 if getattr(self, 'active_after_stop', 0):
                     self.active_after_stop -= 1
@@ -133,6 +160,9 @@ class FakeObs:
                     self.pending_active -= 1
                     self.session_active = self.pending_active == 0
                     data = {'outputActive': False}
+                    if self.session_active:
+                        events.append(self.event('RecordStateChanged', {
+                            'outputActive': True, 'outputState': obsws.STARTED, 'outputPath': self.cur_path}))
                 elif getattr(self, 'session_active', False):
                     data = {'outputActive': True, 'outputDuration': 12345, 'outputTimecode': '00:00:12.345'}
                 else:
@@ -143,8 +173,34 @@ class FakeObs:
                     ok = False
                     if getattr(self, 'start_anyway', False):  # refused, but OBS started (reconcile by status)
                         self.session_active = True
+                        self.cur_path = self.new_file()
+                        events.append(self.event('RecordStateChanged', {
+                            'outputActive': True, 'outputState': obsws.STARTED, 'outputPath': self.cur_path}))
                 else:
                     self.pending_active = 2
+                    self.cur_path = self.first_path = self.new_file()
+            elif t == 'SplitRecordFile':
+                if not self.output_settings.get('split_file'):
+                    ok, code = False, 702  # obs-websocket: RequestProcessingFailed (splitting not enabled)
+                elif not getattr(self, 'session_active', False):
+                    ok, code = False, 501
+                elif self.split_ack != 'never':
+                    self.cur_path = self.new_file()
+                    changed = self.event('RecordFileChanged', {'newOutputPath': self.cur_path})
+                    (events if self.split_ack == 'now' else self.deferred).append(changed)
+            elif t == 'GetVersion':
+                data = {'obsVersion': '32.2.0', 'obsWebSocketVersion': '5.7.4', 'availableRequests':
+                        ['StartRecord', 'StopRecord'] + (['SplitRecordFile'] if self.has_split_request else [])}
+            elif t == 'GetOutputList':
+                data = {'outputs': [{'outputName': 'simple_file_output', 'outputKind': 'mp4_output',
+                                     'outputActive': bool(getattr(self, 'session_active', False))}]}
+            elif t == 'GetOutputSettings':
+                data = {'outputSettings': dict(self.output_settings)}
+            elif t == 'SetOutputSettings':
+                self.output_settings.update(d['requestData']['outputSettings'])
+            elif t == 'GetProfileParameter':
+                rd = d['requestData']
+                data = {'parameterValue': self.profile.get((rd['parameterCategory'], rd['parameterName']))}
             elif t == 'CreateRecordChapter':
                 ok = getattr(self, 'chapters', True)
             elif t == 'GetRecordDirectory':
@@ -155,9 +211,12 @@ class FakeObs:
                 data = {}
             else:
                 ok = False
+            code = code or (100 if ok else 204)
             self.send(sock, {'op': 7, 'd': {'requestType': t, 'requestId': d['requestId'],
-                                            'requestStatus': {'result': ok, 'code': 100 if ok else 204},
+                                            'requestStatus': {'result': ok, 'code': code},
                                             'responseData': data}})
+            for event in events:
+                self.send(sock, event)
 
 
 class Obs(unittest.TestCase):
@@ -260,6 +319,104 @@ class Obs(unittest.TestCase):
         # a stop with nothing recording (OBS 501): reconciled to "no output", not an exception
         stop = cap.handle('recording.stop', {})
         self.assertEqual((stop['path'], stop['finalized']), (None, False))
+
+    def test_client_subscribes_to_output_events_and_keeps_them(self):
+        c = self.client()
+        self.assertEqual(self.obs.event_subs, obsws.EVENTS_OUTPUTS)
+        cap = obsws.ObsCapture(c)
+        cap.handle('recording.session_start', {})
+        # the STARTED event named the file, and was consumed (not left for a later wait)
+        self.assertEqual(cap.current_file, str(self.tmp / 'rec-1.mp4'))
+        self.assertFalse(c.take_events('RecordStateChanged'))
+        self.assertIsNone(c.wait_event('RecordFileChanged', 0.2))
+
+    def test_session_split_maps_each_new_file_to_its_split(self):
+        self.obs.output_settings['split_file'] = True
+        cap = obsws.ObsCapture(self.client())
+        types = lambda: [c[0] for c in self.obs.calls]  # noqa: E731
+        start = cap.handle('recording.session_start', {})
+        self.assertEqual(start['path'], str(self.tmp / 'rec-1.mp4'))
+        first = cap.handle('recording.session_split', {'label': 'A:row-start', 'chapter': True})
+        self.assertTrue(first['split_ok'], first)
+        self.assertEqual((first['prev_path'], first['new_path']), (str(self.tmp / 'rec-1.mp4'), str(self.tmp / 'rec-2.mp4')))
+        self.assertEqual(first['closed'], [{'path': str(self.tmp / 'rec-1.mp4'), 'finalized': True}])
+        self.assertEqual((first['rec_ms'], first['file_rec_ms'], first['chapter_ok']), (12345, 12345, True))
+        second = cap.handle('recording.session_split', {'label': 'B:row-start'})
+        self.assertEqual(second['new_path'], str(self.tmp / 'rec-3.mp4'))
+        self.assertEqual([c['path'] for c in second['closed']], [str(self.tmp / 'rec-2.mp4')])
+        stop = cap.handle('recording.session_stop', {})
+        # the last file is the last RecordFileChanged's (OBS's StopRecord and STOPPED event name the first)
+        self.assertEqual(stop['path'], str(self.tmp / 'rec-3.mp4'))
+        self.assertTrue(stop['finalized'])
+        self.assertEqual((types().count('StartRecord'), types().count('StopRecord')), (1, 1))
+
+    def test_unacknowledged_split_fails_loudly_and_a_late_one_is_followed(self):
+        self.obs.output_settings['split_file'] = True
+        cap = obsws.ObsCapture(self.client())
+        types = lambda: [c[0] for c in self.obs.calls]  # noqa: E731
+        cap.handle('recording.session_start', {})
+        self.obs.split_ack = 'never'
+        lost = cap.handle('recording.session_split', {'label': 'A', 'cap_s': 0.3})
+        self.assertEqual((lost['split_ok'], lost['error'], lost['closed']), (False, 'split_unacknowledged', []))
+        self.assertEqual(cap.current_file, str(self.tmp / 'rec-1.mp4'))  # the old file is still the open one
+        # never a Start/Stop as a substitute mid-session (F04's race)
+        self.assertEqual((types().count('StartRecord'), types().count('StopRecord')), (1, 0))
+        self.obs.split_ack = 'late'  # acknowledged only after the client's cap
+        late = cap.handle('recording.session_split', {'label': 'B', 'cap_s': 0.3})
+        self.assertEqual(late['error'], 'split_unacknowledged')
+        self.obs.split_ack = 'now'
+        after = cap.handle('recording.session_split', {'label': 'C'})
+        self.assertEqual(after['late_paths'], [str(self.tmp / 'rec-2.mp4')])
+        self.assertEqual(after['prev_path'], str(self.tmp / 'rec-2.mp4'))
+        self.assertEqual(after['new_path'], str(self.tmp / 'rec-3.mp4'))
+
+    def test_split_refused_when_splitting_is_off_or_not_recording(self):
+        cap = obsws.ObsCapture(self.client())
+        idle = cap.handle('recording.session_split', {'label': 'A'})
+        self.assertEqual((idle['split_ok'], idle['error']), (False, 'not_recording'))
+        cap.handle('recording.session_start', {})
+        off = cap.handle('recording.session_split', {'label': 'A'})
+        self.assertEqual((off['split_ok'], off['error']), (False, 'obs_702'))
+
+    def test_split_check_and_enable(self):
+        c = self.client()
+        check = obsws.split_check(c)
+        self.assertFalse(check['ok'])
+        self.assertIn('split-enable', check['why'])
+        self.assertEqual((check['obs_version'], check['output'], check['output_kind']),
+                         ('32.2.0', 'simple_file_output', 'mp4_output'))
+        done = obsws.split_enable(c)
+        self.assertNotIn('split_file', done['before'])
+        self.assertEqual(done['set'], {'split_file': True, 'directory': str(self.tmp),
+                                       'format': '%CCYY-%MM-%DD %hh-%mm-%ss', 'extension': 'mp4',
+                                       'allow_spaces': True})
+        self.assertTrue(done['after']['split_file'])
+        self.assertTrue(obsws.split_check(c)['ok'])
+        # Advanced output mode: the operator's Settings > Output > Recording > Automatic File Splitting (the profile;
+        # OBS fills the output's split_file only at StartRecord)
+        self.obs.output_settings = {'path': ''}
+        self.obs.profile.update({('Output', 'Mode'): 'Advanced', ('AdvOut', 'RecSplitFile'): 'true',
+                                 ('AdvOut', 'RecSplitFileType'): 'Manual', ('AdvOut', 'RecType'): 'Standard'})
+        adv = obsws.split_check(c)
+        self.assertTrue(adv['ok'], adv)
+        self.assertEqual((adv['mode'], adv['rec_split_type']), ('Advanced', 'Manual'))
+        self.obs.profile[('AdvOut', 'RecSplitFile')] = 'false'
+        self.assertIn('Automatic File Splitting is off', obsws.split_check(c)['why'])
+        self.obs.has_split_request = False
+        self.assertIn('SplitRecordFile', obsws.split_check(c)['why'])
+        self.obs.session_active = True
+        with self.assertRaises(obsws.ObsError) as cm:
+            obsws.split_enable(c)
+        self.assertEqual(cm.exception.code, 'busy')
+
+    def test_switch_client_routes_split_and_check(self):
+        self.obs.output_settings.update(split_file=True, directory=str(self.tmp))
+        c = sr.SwitchClient('127.0.0.1', 1, 't' * 20, capd_socket='/nonexistent', obs_factory=self.client)
+        self.assertTrue(c.request('recording.split_check', {})['result']['ok'])
+        self.assertTrue(c.request('recording.session_start', {})['ok'])
+        r = c.request('recording.session_split', {'label': 'A:row-start'})
+        self.assertTrue(r['ok'], r)
+        self.assertTrue(r['result']['split_ok'])
 
     def test_no_source_for_the_device(self):
         self.obs.inputs = [{'inputName': 'Cam', 'inputKind': 'v4l2_input', 'settings': {'device_id': '/dev/video0'}}]
