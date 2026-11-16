@@ -160,5 +160,63 @@ class CardOverMtpTransport(Card):
     transport = 'mtp'
 
 
+class CardOverDbiFtp(Card):
+    """The same suite over DBI's FTP route (operator note 2026-11-16 ~04:16Z), against a fake server with DBI's
+    quirks (NLST ignores its argument; rename onto an existing file refused)."""
+    transport = 'ftp'
+
+    def setUp(self):
+        super().setUp()
+        from fake_ftp import FakeFtp
+        self.ftp = FakeFtp(self.card)
+        self.root = f'ftp://127.0.0.1:{self.ftp.port}'
+        self._creds = oi.ftp_credentials
+        oi.ftp_credentials = lambda bookmarks=None: ('switch', 'secret-pass')
+
+    def tearDown(self):
+        oi.ftp_credentials = self._creds
+        self.ftp.stop()
+        super().tearDown()
+
+    def test_missing_card_is_reported(self):
+        with self.assertRaises(SystemExit) as cm:
+            oi.transport('ftp', 'ftp://127.0.0.1:1')
+        self.assertIn('card not visible', str(cm.exception))
+
+    def test_every_operation_types_binary(self):
+        self.test_add_then_replace_with_rollback_and_receipts()
+        self.assertGreater(self.ftp.commands.count('TYPE'), 5)
+        # every connection sets TYPE I after login (ftplib adds its own TYPE per transfer)
+        self.assertGreaterEqual(self.ftp.commands.count('TYPE'), self.ftp.commands.count('USER'))
+
+    def test_fetch_is_read_only(self):
+        (self.card / 'ultimate/switch-remote').mkdir(parents=True)
+        (self.card / 'ultimate/switch-remote/sysmodule.log').write_bytes(b'boot breadcrumb\n')
+        out = self.tmp / 'fetched'
+        with contextlib.redirect_stdout(io.StringIO()):
+            oi.main(['fetch', str(out), '--transport', 'ftp', '--root', self.root, '--path', 'ultimate/switch-remote',
+                     '--path', 'atmosphere/crash_reports'])
+        m = json.loads((out / 'fetch-manifest.json').read_text())
+        self.assertEqual(list(m['files']), ['ultimate/switch-remote/sysmodule.log'])
+        self.assertEqual(m['absent'], ['atmosphere/crash_reports'])
+        self.assertEqual((out / 'ultimate/switch-remote/sysmodule.log').read_bytes(), b'boot breadcrumb\n')
+        writes = {'STOR', 'DELE', 'RNFR', 'RNTO', 'MKD'}
+        self.assertFalse(writes & set(self.ftp.commands))
+
+    def test_credentials_come_from_the_bookmark_and_are_never_printed(self):
+        oi.ftp_credentials = self._creds
+        bm = self.tmp / 'bookmarks'
+        bm.write_text(f'file:///home Home\nftp://switch:secret-pass@127.0.0.1:{self.ftp.port}/ Switch SD (FTP)\n')
+        self.assertEqual(oi.ftp_credentials(bm), ('switch', 'secret-pass'))
+        j = self.job('j', {NRO: b'x'})
+        oi.ftp_credentials = lambda bookmarks=None: self._creds(bm)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            oi.main(['preflight', str(j), '--transport', 'ftp', '--root', self.root])
+            oi.main(['install', str(j), '--transport', 'ftp', '--root', self.root])
+        text = buf.getvalue() + ''.join(p.read_text() for p in j.glob('*.json')) + (j / 'INSTALL.md').read_text()
+        self.assertNotIn('secret-pass', text)
+
+
 if __name__ == '__main__':
     unittest.main()

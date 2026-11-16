@@ -29,7 +29,9 @@ install: needs a fresh preflight receipt whose before-hashes still match; for ea
 The user connects and disconnects the Switch: this tool never mounts, unmounts or ejects anything.
 """
 import argparse
+import ftplib
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -200,8 +202,140 @@ class Mtp:
         return sorted(out)
 
 
+def ftp_credentials(bookmarks=None):
+    """(user, password) for DBI's FTP server, held in memory only, NEVER printed or logged. The user comes from the
+    GTK bookmark labelled "Switch SD" (~/.config/gtk-3.0/bookmarks); the password from that URL, else from the GNOME
+    keyring entry gvfs stored for it (secret-tool), else empty."""
+    from urllib.parse import unquote, urlsplit
+    path = Path(bookmarks or Path.home() / '.config' / 'gtk-3.0' / 'bookmarks')
+    for line in path.read_text().splitlines():
+        url, _, label = line.partition(' ')
+        if url.startswith('ftp://') and label.startswith('Switch SD'):
+            u = urlsplit(url)
+            user, password = unquote(u.username or ''), unquote(u.password or '')
+            if not password and shutil.which('secret-tool'):
+                r = subprocess.run(['secret-tool', 'lookup', 'protocol', 'ftp', 'server', u.hostname or '', 'user', user],
+                                   capture_output=True, text=True, timeout=10)
+                password = r.stdout.rstrip('\n') if r.returncode == 0 else ''
+            return user, password
+    raise SystemExit('no "Switch SD" FTP bookmark in ~/.config/gtk-3.0/bookmarks')
+
+
+class Ftp:
+    """DBI's FTP server (operator note 2026-11-16 ~04:16Z; DBI launched from the Album, FTP on). `root` is
+    ftp://HOST[:PORT] (default port <ftp-port>). One fresh connection per operation, TYPE I. This server's NLST ignores a
+    path argument, so listings cwd first. Writes: STOR to <name>.sr-part, RETR it back and compare sha256, then rename
+    into place (if the server refuses to rename over an existing file, that allowlisted file is deleted first: its
+    rollback copy is already on the card and verified); the caller reads the final file back again."""
+
+    def __init__(self, root, credentials=None):
+        from urllib.parse import urlsplit
+        u = urlsplit(root if '://' in root else 'ftp://' + root)
+        self.host, self.port = u.hostname, u.port or 5000
+        self.user, self.password = credentials or ftp_credentials()
+        try:
+            f = self._conn()
+            f.quit()
+        except (OSError, EOFError, ftplib.Error) as e:
+            raise SystemExit(f'card not visible at ftp://{self.host}:{self.port}: ask the user to start DBI\'s FTP '
+                             f'server ({type(e).__name__})') from None
+
+    def _conn(self):
+        f = ftplib.FTP()
+        f.connect(self.host, self.port, timeout=30)
+        f.login(self.user, self.password)
+        f.voidcmd('TYPE I')
+        return f
+
+    @staticmethod
+    def _abs(rel):
+        return '/' + rel.strip('/')
+
+    def _is_dir(self, f, rel):
+        try:
+            f.cwd(self._abs(rel))
+            return True
+        except ftplib.error_perm:
+            return False
+
+    def exists(self, rel):
+        f = self._conn()
+        try:
+            parent, name = rel.rsplit('/', 1) if '/' in rel else ('', rel)
+            if not self._is_dir(f, parent):
+                return False
+            return name in f.nlst()
+        finally:
+            f.close()
+
+    def read(self, rel):
+        f = self._conn()
+        try:
+            buf = io.BytesIO()
+            f.retrbinary('RETR ' + self._abs(rel), buf.write)
+            return buf.getvalue()
+        finally:
+            f.close()
+
+    def _mkdirs(self, f, parent):
+        cur = ''
+        for part in [p for p in parent.split('/') if p]:
+            cur += '/' + part
+            try:
+                f.cwd(cur)
+            except ftplib.error_perm:
+                f.mkd(cur)
+
+    def write(self, rel, data):
+        parent = rel.rsplit('/', 1)[0] if '/' in rel else ''
+        part = rel + '.sr-part'
+        f = self._conn()
+        try:
+            self._mkdirs(f, parent)
+            f.storbinary('STOR ' + self._abs(part), io.BytesIO(data))
+        finally:
+            f.close()
+        if hashlib.sha256(self.read(part)).hexdigest() != hashlib.sha256(data).hexdigest():
+            raise SystemExit(f'refused: {part} did not read back; left in place for inspection')
+        f = self._conn()
+        try:
+            try:
+                f.rename(self._abs(part), self._abs(rel))
+            except ftplib.error_perm:
+                f.delete(self._abs(rel))  # an allowlisted file whose verified rollback copy is already on the card
+                f.rename(self._abs(part), self._abs(rel))
+        finally:
+            f.close()
+
+    def remove(self, rel):
+        f = self._conn()
+        try:
+            f.delete(self._abs(rel))
+        finally:
+            f.close()
+
+    def listdir(self, rel):
+        f = self._conn()
+        out = []
+        try:
+            def walk(d):
+                if not self._is_dir(f, d):
+                    return
+                names = [n.rsplit('/', 1)[-1] for n in f.nlst()]
+                for name in sorted(n for n in names if n not in ('.', '..')):
+                    child = f'{d}/{name}' if d else name
+                    if self._is_dir(f, child):
+                        walk(child)
+                    else:
+                        out.append(child)
+            walk(rel.strip('/'))
+        finally:
+            f.close()
+        return sorted(out)
+
+
 def transport(kind, root):
-    return Ums(root) if kind == 'ums' else Mtp(root)
+    return {'ums': Ums, 'mtp': Mtp, 'ftp': Ftp}[kind](root)
 
 
 def job_removals(job):
@@ -358,14 +492,38 @@ def table_md(receipt):
     return '\n'.join(lines)
 
 
+def fetch(out, card, paths):
+    """READ-ONLY copies of card files/folders into `out`, with a sha256 manifest. Nothing on the card is written."""
+    out = Path(out)
+    files = []
+    for rel in paths:
+        rel = rel.strip('/')
+        listed = card.listdir(rel)
+        files += listed if listed else ([rel] if card.exists(rel) else [])
+    manifest = {'time': now(), 'files': {}, 'absent': [p.strip('/') for p in paths if not any(
+        f == p.strip('/') or f.startswith(p.strip('/') + '/') for f in files)]}
+    for rel in sorted(set(files)):
+        data = card.read(rel)
+        (out / rel).parent.mkdir(parents=True, exist_ok=True)
+        (out / rel).write_bytes(data)
+        manifest['files'][rel] = {'bytes': len(data), 'sha256': show(rel, sha(data))}
+    (out / 'fetch-manifest.json').write_text(json.dumps(manifest, indent=1) + '\n')
+    return manifest
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('phase', choices=['preflight', 'install'])
-    ap.add_argument('job')
-    ap.add_argument('--transport', choices=['ums', 'mtp'], required=True)
+    ap.add_argument('phase', choices=['preflight', 'install', 'fetch'])
+    ap.add_argument('job', help='the job folder (fetch: the local output folder)')
+    ap.add_argument('--transport', choices=['ums', 'mtp', 'ftp'], required=True)
     ap.add_argument('--root', required=True)
+    ap.add_argument('--path', action='append', default=[], help='fetch: a card file or folder to copy (repeatable)')
     a = ap.parse_args(argv)
     card = transport(a.transport, a.root)
+    if a.phase == 'fetch':
+        r = fetch(a.job, card, a.path)
+        print(json.dumps(r, indent=1))
+        return 0
     if a.phase == 'preflight':
         r = preflight(a.job, card, a.transport)
         print(json.dumps({k: v for k, v in r.items() if k != '_before_raw' and k != 'watched_before'}, indent=1))
