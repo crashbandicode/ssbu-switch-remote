@@ -36,14 +36,13 @@ from pathlib import Path
 
 from switch_remote import (ALIASES, BUTTONS, DEFAULT_PORT, MACRO_SAMPLES_MAX, SwitchClient, SwitchError, button_bit,
                            read_token)
+from sequences import LAUNCH_QUIET_MS, HomeSequences
 
 AUTOPILOT_PORT = 4150
 MAX_MS = 10000                 # sys-autopilot caps durations at 10 s
 OWN_CHECK_EVERY_S = 30.0
 WATCHDOG_S = 0.1
-LAUNCH_QUIET_MS = 5000         # "no fresh scene report": nothing for 5 s
 SETTLE_S = 1.5                 # HOME menu animation before a still
-TERMINATE_WAIT_S = 15.0
 FRAME_S = 1 / 60
 # The sysmodule's log roots (sysmodule/core/core.hpp kRootNames / kRootPaths).
 ROOTS = {'crash_reports': '/atmosphere/crash_reports', 'fatal_reports': '/atmosphere/fatal_reports',
@@ -70,7 +69,7 @@ def sd_path(root, path=''):
     return '/'.join([ROOTS[root]] + parts)
 
 
-class AutopilotClient(SwitchClient):
+class AutopilotClient(HomeSequences, SwitchClient):
     def __init__(self, host, port=AUTOPILOT_PORT, token=None, own_port=DEFAULT_PORT, http_timeout=5.0, scene=None,
                  still_dir=None, settle_s=SETTLE_S, homegate_refs=None, **kw):
         super().__init__(host, own_port, token or read_token(), **kw)
@@ -289,72 +288,6 @@ class AutopilotClient(SwitchClient):
         """HOME / X / A inside a fixed sequence only (not gated: the sequences carry their own checks)."""
         self._check_single_driver()
         return self._http('POST', '/input/tap', {'buttons': [name], 'durationMs': 100}, extra_timeout=0.1)
-
-    def _still(self, label):
-        self.still_dir.mkdir(parents=True, exist_ok=True)
-        path = self.still_dir / f'{time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())}-{label}.png'
-        self._capd('ui.screenshot', {'path': str(path), 'width': 1280})
-        import homegate
-        verdict = homegate.check(path, **({'refs': self.homegate_refs} if self.homegate_refs else {}))
-        return str(path), verdict
-
-    def _game_quiet(self):
-        """True when no scene report has arrived for LAUNCH_QUIET_MS (the game is not running)."""
-        st = self.scene_status()
-        g = st.get('gate')
-        if g == 'no_scene_report':
-            return True, st
-        if g == 'no_scene_receiver' or g is None:
-            return False, st  # can't tell: fail closed
-        return st.get('age_ms', 0) >= LAUNCH_QUIET_MS, st
-
-    def launch(self):
-        quiet, st = self._game_quiet()
-        if not quiet:
-            raise SwitchError('app_running', f'scene receiver says {st.get("gate")} (age {st.get("age_ms")} ms)')
-        steps = []
-        self._tap_system('HOME')
-        steps.append('HOME')
-        time.sleep(self.settle_s)
-        path, v = self._still('launch-home')
-        steps.append({'still': path, 'gate': v})
-        if not v['ok']:
-            raise SwitchError('not_home_first_tile', json.dumps({'still': path, 'reason': v['reason'],
-                                                                 'scores': v.get('scores')}))
-        quiet, st = self._game_quiet()
-        if not quiet:
-            raise SwitchError('app_running', f'a scene report arrived during the sequence ({st.get("gate")})')
-        self._tap_system('A')
-        steps.append('A')
-        return {'sequence': steps, 'still': path}
-
-    def terminate(self):
-        steps = []
-        self._tap_system('HOME')
-        steps.append('HOME')
-        time.sleep(self.settle_s)
-        path, v = self._still('terminate-home')
-        steps.append({'still': path, 'gate': v})
-        if not v['ok']:
-            raise SwitchError('not_home_first_tile', json.dumps({'still': path, 'reason': v['reason'],
-                                                                 'scores': v.get('scores')}))
-        self._tap_system('X')
-        steps.append('X')
-        time.sleep(self.settle_s)
-        path_x, vx = self._still('terminate-dialog')
-        steps.append({'still': path_x, 'gate': vx})
-        if vx['ok']:
-            # The screen did not change: no close dialog (nothing suspended). A would launch the tile: stop here.
-            raise SwitchError('close_dialog_not_seen', json.dumps({'still': path_x}))
-        self._tap_system('A')
-        steps.append('A')
-        deadline, stopped = time.monotonic() + TERMINATE_WAIT_S, False
-        while time.monotonic() < deadline:
-            if self.scene_status().get('gate') in ('no_scene_report', 'scene_report_stale'):
-                stopped = True
-                break
-            time.sleep(0.25)
-        return {'sequence': steps, 'scene_stopped': stopped}
 
     # --- logs ------------------------------------------------------------------------------------------------
     def _files(self, sd, offset=None):

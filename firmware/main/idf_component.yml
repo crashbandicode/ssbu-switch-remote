@@ -1,0 +1,4 @@
+dependencies:
+  idf: ">=5.5,<5.6"
+  # 1.x: the tinyusb_config_t API this firmware uses (device/string/configuration descriptors).
+  espressif/esp_tinyusb: "==1.7.6~2"

@@ -1,0 +1,13 @@
+# switch-pad (DESIGN.md section 13)
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+# 1 ms task ticks: the report task refreshes the HID report every millisecond.
+CONFIG_FREERTOS_HZ=1000
+# UART0 carries the host protocol: no console and no logs on it (the ROM banner at boot is skipped by the host).
+CONFIG_ESP_CONSOLE_NONE=y
+CONFIG_LOG_DEFAULT_LEVEL_NONE=y
+CONFIG_BOOTLOADER_LOG_LEVEL_NONE=y
+# TinyUSB: one HID interface, no CDC/MSC.
+CONFIG_TINYUSB_HID_COUNT=1
+CONFIG_TINYUSB_CDC_ENABLED=n
+CONFIG_TINYUSB_MSC_ENABLED=n

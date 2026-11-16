@@ -505,11 +505,17 @@ class SwitchClient:
 def make_client(socket_string, **kw):
     """`switch://HOST:PORT` -> SwitchClient; `autopilot://HOST[:4150]` -> the sys-autopilot fallback (autopilot.py).
     The runner's client factory calls this."""
+    if socket_string.startswith('usb://'):
+        import usbpad  # the ESP32-S3 wired controller (DESIGN.md 13)
+        files = os.environ.get('SWITCH_REMOTE_FILES')  # optional sys-autopilot for log reads
+        if files and 'files' not in kw:
+            kw['files'] = make_client(files)
+        return usbpad.UsbClient(socket_string, **kw)
     for scheme in ('switch://', 'autopilot://'):
         if socket_string.startswith(scheme):
             break
     else:
-        raise ValueError(f'not a switch:// or autopilot:// address: {socket_string}')
+        raise ValueError(f'not a switch://, autopilot:// or usb:// address: {socket_string}')
     hostport = socket_string[len(scheme):].rstrip('/')
     host, _, port = hostport.rpartition(':') if ':' in hostport else (hostport, '', '')
     if scheme == 'autopilot://':
