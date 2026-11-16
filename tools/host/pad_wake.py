@@ -98,6 +98,58 @@ def wake(a):
         s.close()
 
 
+def small_diff(a_path, b_path):
+    from PIL import Image, ImageChops, ImageStat
+    with Image.open(a_path) as a, Image.open(b_path) as b:
+        return ImageStat.Stat(ImageChops.difference(a.convert('L'), b.convert('L').resize(a.size))).mean[0]
+
+
+def step(a):
+    """Each --buttons entry: a small baseline frame, `press <button> <ms>` (send time recorded), then small OBS frames
+    as fast as OBS returns them until one differs from the baseline (mean |diff| > --change) or --watch-s passes,
+    then a full still. Latency = press sent -> first changed frame, bracketed by the last unchanged frame (this is
+    end to end: pad, console, HDMI, capture card and OBS)."""
+    s = Session(a.device, a.out)
+    tmp = s.out / 'latency'
+    tmp.mkdir(exist_ok=True)
+    allowed = {'b', 'home', 'dright', 'dleft', 'right', 'left'}
+    try:
+        for button in a.buttons:
+            if button not in allowed:
+                raise SystemExit(f'refused: {button!r} is not one of the approved harmless steps {sorted(allowed)}')
+            base = tmp / f'{button}-base.png'
+            s.c.request('ui.screenshot', {'path': str(base), 'width': 320})
+            t_send = time.time()
+            reply = s.line(f'press {button} {a.press_ms}')
+            t_ok = time.time()
+            last_same, first_changed, grabs, diff, times = t_send, None, 0, 0.0, []
+            while time.time() - t_send < a.watch_s:
+                p = tmp / f'{button}-{grabs:03d}.png'
+                t_req = time.time()
+                s.c.request('ui.screenshot', {'path': str(p), 'width': 320})
+                times.append({'grab': p.name, 'req_ms': round((t_req - t_send) * 1000, 1),
+                              'done_ms': round((time.time() - t_send) * 1000, 1)})
+                grabs += 1
+                diff = small_diff(base, p)
+                if diff > a.change:
+                    first_changed = t_req
+                    break
+                last_same = t_req
+            lat = None
+            if first_changed is not None:
+                lat = {'upper_ms': round((first_changed - t_send) * 1000, 1),
+                       'lower_ms': round((last_same - t_send) * 1000, 1)}
+            # per-grab times for a regional analysis afterwards (small UI changes stay under the whole-frame threshold)
+            (tmp / f'{button}-times.json').write_text(json.dumps({'t_send': t_send, 'grabs': times}, indent=1))
+            time.sleep(a.settle_s)
+            s.receipt(f'press {button} {a.press_ms}', {'reply': reply, 'ok_ms': round((t_ok - t_send) * 1000, 1),
+                                                      'changed': first_changed is not None, 'diff': round(diff, 2),
+                                                      'grabs': grabs, 'latency': lat}, shot=f'after-{button}')
+        return 0
+    finally:
+        s.close()
+
+
 def poll(a):
     s = Session(a.device, a.out)
     try:
@@ -114,7 +166,8 @@ def poll(a):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('cmd', choices=['wake', 'poll'])
+    ap.add_argument('cmd', choices=['wake', 'poll', 'step'])
+    ap.add_argument('buttons', nargs='*', help='step: harmless buttons in order (b home dright dleft)')
     ap.add_argument('--out', default='/home/user/ssbu-switch-remote-work/pad-first-test')
     ap.add_argument('--device', default='auto')
     ap.add_argument('--max', type=int, default=10)
@@ -123,8 +176,11 @@ def main(argv=None):
     ap.add_argument('--gap-s', type=float, default=1.0)
     ap.add_argument('--lit', type=float, default=8.0, help='mean luminance (0-255) above which the screen is on')
     ap.add_argument('--seconds', type=float, default=5.0)
+    ap.add_argument('--watch-s', type=float, default=2.0)
+    ap.add_argument('--settle-s', type=float, default=1.0)
+    ap.add_argument('--change', type=float, default=1.5, help='step: mean |diff| (0-255) that counts as a change')
     a = ap.parse_args(argv)
-    return wake(a) if a.cmd == 'wake' else poll(a)
+    return {'wake': wake, 'poll': poll, 'step': step}[a.cmd](a)
 
 
 if __name__ == '__main__':

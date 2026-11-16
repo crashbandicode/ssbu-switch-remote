@@ -134,6 +134,14 @@ Probable root cause: the listener was bound before DHCP. r4 (`9d8a027`, self-dia
 - The console was asleep (black). 10 HOME presses (150 ms, 1 s apart, all `OK`) did not wake it; the stills are in `/home/user/ssbu-switch-remote-work/pad-first-test/shots/`. The console kept polling the pad at 125 Hz throughout.
 - Next: the operator wakes the console (power button, or a Bluetooth controller's HOME), then the B→HOME test with stills (`tools/host/pad_wake.py`, `pad_v0_test.py`).
 - Ledger: the Yoga claim was released and the lane cleaned (04:32Z).
+- **First control CONFIRMED (04:43Z, console woken by the operator)** (stills `10`–`14` in `pad-first-test/shots/`):
+  - HOME menu, SSBU first (gate ok).
+  - **B** → the console shows the controller indicator (pad icon, player LED 1).
+  - **HOME** → no visible change (expected on HOME).
+  - **D-pad Right** → the cursor moves to Super Mario Bros. Wonder.
+  - **D-pad Left** → back to SSBU (gate scores 0.0).
+  - End-to-end latency (UART press → first changed OBS frame): B 127–151 ms, Right 157–190 ms, Left 150–162 ms (`tools/host/pad_latency_regions.py`).
+  - **A wired pad does NOT wake the sleeping console:** 10 HOME presses at 04:33Z did nothing; the operator woke it.
 
 ## Pi Zero 2 W (operator note ~03:53Z): evaluated, DESIGN.md 13a
 
