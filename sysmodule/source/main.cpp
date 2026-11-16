@@ -490,7 +490,9 @@ int main(int, char**) {
         // A fresh instance of this program (pm and the loader allow a second instance of a non-application
         // program: AMS pm_process_manager.cpp:131 checks applications only; ldr PinProgram has no uniqueness
         // check, ldr_process_creation.cpp:918-921). It loads the exefs.nsp now on the card; this one then exits.
-        const NcmProgramLocation loc{.program_id = sr::kOwnProgramId, .storageID = NcmStorageId_None};
+        NcmProgramLocation loc = {};
+        loc.program_id = sr::kOwnProgramId;
+        loc.storageID = NcmStorageId_None;
         u64 pid = 0;
         Result rc = pmshellLaunchProgram(0, &loc, &pid);
         snprintf(line, sizeof line, "restart: launched pid=%llu rc=0x%x; exiting", (unsigned long long)pid, rc);
