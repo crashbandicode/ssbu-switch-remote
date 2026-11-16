@@ -10,6 +10,14 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **12:05Z NEW JOB: HARDWARE FEATURE LEDGER** (operator: "test that the features work on switch like we did with eden").
+  Card as is (TR rc.15 `de563644` + Deluxe 0.10.8 `30cb25dd`). **No card writes; FTP log reads OK; no pushes.**
+  - Out dir `/home/user/smash-training-lobby/artifacts/switch-hw-ledger-rc15/`: `PLAN.md` (a research worker is
+    writing it from the Eden rc.15 final pass + TR `docs/menu/*` + ROUTES), then `LEDGER.md` (| feature | Eden
+    evidence | Switch result PASS/FAIL/N/A | GIF |). FAIL = still + TR log excerpt (FTP). Milestone post every ~10.
+  - Runner: `tools/host/hwstep.py --name Fnn-x --out <dir>/Fnn -- "press a 100" sleep:0.5 still:gate …` (OBS burst
+    10 fps → GIF 640w ≤10 MB via Pillow; no ffmpeg on the Surface). Self-test OK (`selftest/`).
+  - Run the Skyline TCP log during the session (`skyline_tcplog.py --label hwledger-1 --seconds 7200`).
 - **12:00Z DONE, summary posted (INBOX line 38547):** g1 Deluxe 0.10.8 installed (`card-jobs/g1b-deluxe-0.10.8`, ok, 20
   others unchanged, rollback `ultimate/switch-remote/backups/pre-30cb25ddea78b2f1.…`); Smoke B PASS (main menu, 19 mains
   `(0x0)`, Deluxe `0.10.8-e7720fd64c92`). Console on HOME, SSBU selected. Waiting for the primary's next order.
