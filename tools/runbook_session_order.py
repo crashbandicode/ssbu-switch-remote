@@ -5,7 +5,7 @@
 Order (the operator, verbatim: "start with the newest features first then work your way back. I'd like to see the
 quicker cpu cycling, eggsercise, break the targets, and drills work"):
   G01 baseline T-01 (every page to its saved defaults, P1 Mario, CPU Mario)
-  G02a-d SHOWCASE: quicker CPU cycling, Eggs-ercise, Break the Targets, input drills (rows.json "showcase")
+  G02a-d SHOWCASE: quicker CPU cycling, Eggs-ercise, Break the Targets, input drills + SC-02 grading (rows.json "showcase")
   G03 the LEG-* legend checks
   then one group per release, newest first (`- **Release:**`, tools/runbook_release.py), pages grouped inside
   the last group: T-08, X-14 (restart), REC-77 (10-minute cap, optional), then the clean-up T-09.
@@ -35,8 +35,10 @@ SHOWCASE = [  # (key, title, rows in order; SC-01 is a session row written here)
     ('cpu-cycling', 'quicker CPU cycling (Cycle Preload keeps the next fighters ready)', ['FS-38', 'FS-39', 'SC-01']),
     ('eggsercise', 'Eggs-ercise', ['FS-54', 'FS-55', 'FS-57', 'FS-58', 'FS-59', 'FS-61', 'FS-62', 'FS-63']),
     ('break-the-targets', 'Break the Targets', ['FS-65', 'FS-68', 'FS-70']),
-    ('drills', 'input drills: record, Make combo, Crop (Eden-exact PF rows), combo drill',
-     ['PF-05', 'PF-07', 'PF-06', 'PF-08', 'PF-09', 'PF-11', 'REC-24', 'REC-25', 'REC-26']),
+    # SC-02 (catalog row, rows/showcase.md) sits right after PF-08: that direct Record makes its 4-step drill the
+    # grading target, so the grading take needs no list order guessed; PF-09 (Crop) reads the list after it.
+    ('drills', 'input drills: record, Make combo, Crop (Eden-exact PF rows), grading, combo drill',
+     ['PF-05', 'PF-07', 'PF-06', 'PF-08', 'SC-02', 'PF-09', 'PF-11', 'REC-24', 'REC-25', 'REC-26']),
 ]
 BLOCKS = [['T-04', 'REC-43', 'REC-44', 'REC-46', 'T-05'],
           ['SAV-12', 'SAV-22', 'SAV-23', 'SAV-24', 'SAV-25', 'SAV-26', 'SAV-27', 'SAV-28', 'SAV-29', 'SAV-30', 'SAV-33',
