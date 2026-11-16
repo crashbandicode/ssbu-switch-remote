@@ -114,20 +114,45 @@ class FakeObs:
             elif t == 'GetSourceScreenshot':
                 data = {'imageData': 'data:image/png;base64,' + base64.b64encode(tiny_png()).decode()}
             elif t == 'StopRecord':
-                if self.replay_dir:  # like OBS: the answer comes first, the output stays active a little longer
-                    path = self.replay_dir / '2026-11-15 22-00-00.mp4'
-                    path.write_bytes(b'mp4')
-                    self.active_after_stop = 2
-                    data = {'outputPath': str(path)}
+                if not getattr(self, 'session_active', False) and not getattr(self, 'pending_active', 0):
+                    ok = False  # OBS 501: not recording
                 else:
-                    data = {'outputPath': '/home/x/obs/2026-11-15 22-00-00.mkv'}
-            elif t == 'GetRecordStatus' and getattr(self, 'active_after_stop', 0):
-                self.active_after_stop -= 1
-                data = {'outputActive': True}
+                    self.session_active, self.pending_active = False, 0
+                    if self.replay_dir:  # like OBS: the answer comes first, the output stays active a little longer
+                        path = self.replay_dir / '2026-11-15 22-00-00.mp4'
+                        path.write_bytes(b'mp4')
+                        self.active_after_stop = 2
+                        data = {'outputPath': str(path)}
+                    else:
+                        data = {'outputPath': '/home/x/obs/2026-11-15 22-00-00.mkv'}
+            elif t == 'GetRecordStatus':
+                if getattr(self, 'active_after_stop', 0):
+                    self.active_after_stop -= 1
+                    data = {'outputActive': True}
+                elif getattr(self, 'pending_active', 0):  # like OBS: StartRecord answers before the output runs
+                    self.pending_active -= 1
+                    self.session_active = self.pending_active == 0
+                    data = {'outputActive': False}
+                elif getattr(self, 'session_active', False):
+                    data = {'outputActive': True, 'outputDuration': 12345, 'outputTimecode': '00:00:12.345'}
+                else:
+                    data = {'outputActive': False}
+            elif t == 'StartRecord':
+                if getattr(self, 'refuse_start', 0):
+                    self.refuse_start -= 1
+                    ok = False
+                    if getattr(self, 'start_anyway', False):  # refused, but OBS started (reconcile by status)
+                        self.session_active = True
+                else:
+                    self.pending_active = 2
+            elif t == 'CreateRecordChapter':
+                ok = getattr(self, 'chapters', True)
+            elif t == 'GetRecordDirectory':
+                data = {'recordDirectory': str(self.replay_dir or '/nonexistent')}
             elif t == 'GetLastReplayBufferReplay':
                 data = {'savedReplayPath': str(self.replay_dir / 'Replay.mkv') if self.replay_dir else None}
-            elif t in ('StartRecord', 'SaveReplayBuffer', 'GetRecordStatus'):
-                data = {'outputActive': t == 'StartRecord'} if t == 'GetRecordStatus' else {}
+            elif t == 'SaveReplayBuffer':
+                data = {}
             else:
                 ok = False
             self.send(sock, {'op': 7, 'd': {'requestType': t, 'requestId': d['requestId'],
@@ -185,6 +210,57 @@ class Obs(unittest.TestCase):
         replay = cap.handle('replay.save', {})
         self.assertEqual(replay['path'], str(self.tmp / 'Replay.mkv'))
 
+    def test_session_recording_start_mark_stop(self):
+        cap = obsws.ObsCapture(self.client())
+        types = lambda: [c[0] for c in self.obs.calls]  # noqa: E731
+        idle = cap.handle('recording.session_mark', {'label': 'X-01 start', 'chapter': True})
+        self.assertEqual((idle['active'], idle['rec_ms'], idle['frame'], idle['chapter_ok']), (False, None, None, None))
+        self.obs.refuse_start = 1  # OBS refuses once (obs_500 while a file finalizes): retried after 2 s
+        start = cap.handle('recording.session_start', {})
+        self.assertFalse(start['already_active'])
+        self.assertEqual(types().count('StartRecord'), 2)
+        self.assertIn('GetRecordDirectory', types())  # it waited for the newest output file to hold its size
+        # it returned only once OBS reported the output active (StartRecord answers first: two inactive polls)
+        self.assertTrue(self.obs.session_active)
+        n = types().count('StartRecord')
+        # an output still active: refused, never a second StartRecord (hw-run-2b's stray recording + obs_500)
+        with self.assertRaises(obsws.ObsError) as cm:
+            cap.handle('recording.session_start', {'idle_cap': 0.5})
+        self.assertEqual(cm.exception.code, 'busy')
+        self.assertEqual(types().count('StartRecord'), n)
+        mark = cap.handle('recording.session_mark', {'label': 'DC-02 start', 'chapter': True})
+        self.assertEqual((mark['active'], mark['rec_ms'], mark['frame'], mark['chapter_ok']), (True, 12345, 741, True))
+        self.assertIn(('CreateRecordChapter', {'chapterName': 'DC-02 start'}), self.obs.calls)
+        self.obs.chapters = False  # an OBS or format without chapters: reported, not raised
+        self.assertFalse(cap.handle('recording.session_mark', {'label': 'x', 'chapter': True})['chapter_ok'])
+        self.assertIsNone(cap.handle('recording.session_mark', {'label': 'y'})['chapter_ok'])
+        self.obs.session_active = False
+        self.assertFalse(cap.handle('recording.session_stop', {})['was_active'])
+        self.obs.session_active = True  # the fake's StopRecord ends it
+        stop = cap.handle('recording.session_stop', {})
+        self.assertTrue(stop['was_active'])
+        self.assertTrue(stop['path'].endswith('.mp4'))
+        self.assertTrue(stop['finalized'])
+        with self.assertRaises(KeyError):
+            cap.handle('recording.session_pause', {})
+
+    def test_start_and_stop_reconcile_refusals_with_the_record_status(self):
+        cap = obsws.ObsCapture(self.client())
+        types = lambda: [c[0] for c in self.obs.calls]  # noqa: E731
+        # a refused StartRecord (500) after which OBS records anyway: reconciled as started, no second start
+        self.obs.refuse_start, self.obs.start_anyway = 1, True
+        cap.handle('recording.start', {})
+        self.assertEqual(types().count('StartRecord'), 1)
+        stop = cap.handle('recording.stop', {})
+        self.assertTrue(stop['finalized'])
+        # two refusals with OBS idle: an error carrying OBS's code
+        self.obs.refuse_start, self.obs.start_anyway = 2, False
+        with self.assertRaises(obsws.ObsError):
+            cap.handle('recording.start', {'idle_cap': 2})
+        # a stop with nothing recording (OBS 501): reconciled to "no output", not an exception
+        stop = cap.handle('recording.stop', {})
+        self.assertEqual((stop['path'], stop['finalized']), (None, False))
+
     def test_no_source_for_the_device(self):
         self.obs.inputs = [{'inputName': 'Cam', 'inputKind': 'v4l2_input', 'settings': {'device_id': '/dev/video0'}}]
         with self.assertRaises(obsws.ObsError) as cm:
@@ -200,6 +276,17 @@ class Obs(unittest.TestCase):
         kind, why = obsws.pick_backend(obs_factory=down)
         self.assertEqual(kind, 'capd')
         self.assertIn('OBS unavailable', why)
+
+    def test_switch_client_routes_session_recording_to_obs_without_gif(self):
+        c = sr.SwitchClient('127.0.0.1', 1, 't' * 20, capd_socket='/nonexistent', obs_factory=self.client)
+        self.obs.session_active = True
+        r = c.request('recording.session_mark', {'label': 'T-01 start'})
+        self.assertTrue(r['ok'], r)
+        self.assertEqual(r['result']['rec_ms'], 12345)
+        r = c.request('recording.session_stop', {})
+        self.assertTrue(r['ok'], r)
+        self.assertTrue(r['result']['path'].endswith('.mp4'))
+        self.assertNotIn('frames', r['result'])  # no clip/GIF encoding on the session path
 
     def test_switch_client_routes_screenshots_to_obs(self):
         c = sr.SwitchClient('127.0.0.1', 1, 't' * 20, capd_socket='/nonexistent', obs_factory=self.client)

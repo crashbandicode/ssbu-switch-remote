@@ -210,17 +210,17 @@ class ObsCapture:
             w, h = struct.unpack('>II', raw[16:24]) if raw[:8] == b'\x89PNG\r\n\x1a\n' else (None, None)
             return {'path': str(path), 'width': w, 'height': h, 'backend': 'obs', 'frame_time': time.time()}
         if method == 'recording.start':
-            self.client.request('StartRecord')
-            self.recording_started = time.time()
+            self.recording_started = self.start_confirmed(params.get('idle_cap', 20.0))
             return {'accepted': True, 'started_wall': self.recording_started, 'approximate_start': True}
         if method == 'recording.stop':
-            out = self.client.request('StopRecord')
+            path, finalized, _ = self.stop_confirmed()
             started, self.recording_started = self.recording_started, None
-            finalized = self.wait_finalized(out.get('outputPath'))
-            return {'path': out.get('outputPath'), 'frames': None, 'dropped_frames': None,
+            return {'path': path, 'frames': None, 'dropped_frames': None,
                     'first_wall': started, 'approximate_start': True, 'finalized': finalized}
         if method == 'recording.status':
             return self.client.request('GetRecordStatus')
+        if method.startswith('recording.session_'):
+            return self.session(method.split('_', 1)[1], params)
         if method == 'replay.save':
             saved = time.time()
             self.client.request('SaveReplayBuffer')
@@ -233,19 +233,139 @@ class ObsCapture:
             return {'path': path, 'saved_wall': saved}
         raise KeyError(method)
 
-    def wait_finalized(self, path, cap=15.0, poll=0.2):
+    def session(self, op, params):
+        """One continuous recording for a whole hardware session (the runbook cuts clips and stills from it offline),
+        with no clip encoding: start / mark / stop.
+          start -> {started_wall, already_active}       StartRecord unless a recording is already running (a rerun)
+          mark  -> {active, rec_ms, timecode, wall, frame, chapter_ok}
+                   rec_ms is GetRecordStatus.outputDuration (the recording's own clock), frame = rec_ms at 60 fps;
+                   chapter=true also adds a hybrid-MP4 chapter named label (CreateRecordChapter, OBS 30.2+); a
+                   refused chapter is reported, never raised
+          stop  -> {path, stopped_wall, finalized, was_active}"""
+        now = time.time()
+        status = self.client.request('GetRecordStatus')
+        active = bool(status.get('outputActive'))
+        if op == 'start':
+            return {'started_wall': self.start_confirmed(params.get('idle_cap', 20.0)), 'already_active': False}
+        if op == 'mark':
+            ms = status.get('outputDuration')
+            out = {'active': active, 'rec_ms': ms if active else None, 'timecode': status.get('outputTimecode'),
+                   'wall': now, 'frame': round(ms * 60 / 1000) if active and isinstance(ms, (int, float)) else None,
+                   'chapter_ok': None}
+            if active and params.get('chapter') and params.get('label'):
+                try:
+                    self.client.request('CreateRecordChapter', {'chapterName': str(params['label'])[:120]})
+                    out['chapter_ok'] = True
+                except ObsError as e:
+                    out['chapter_ok'] = False
+                    out['chapter_error'] = e.code
+            return out
+        if op == 'stop':
+            if not active:
+                return {'path': None, 'stopped_wall': now, 'finalized': False, 'was_active': False}
+            path, finalized, was_active = self.stop_confirmed(cap=30.0)
+            return {'path': path, 'stopped_wall': time.time(), 'finalized': finalized, 'was_active': was_active}
+        raise KeyError(f'recording.session_{op}')
+
+    def status_active(self):
+        return bool(self.client.request('GetRecordStatus').get('outputActive'))
+
+    def start_confirmed(self, idle_cap=20.0, active_cap=5.0):
+        """StartRecord only on an idle OBS, and return only once OBS says it IS recording (the wall time then).
+        StartRecord answers before the output is active (hw-run-2b: a 0.45 s clip's stop got 501 "not recording",
+        the start went on as a stray recording, and the next start got 500). So:
+          - refuse (ObsError busy) while an output stays active or the newest file still grows past idle_cap;
+          - after StartRecord, poll GetRecordStatus until outputActive (cap active_cap);
+          - on a refusal (500/501) reconcile with GetRecordStatus: active = started; else once more after 2 s."""
+        if not self.wait_idle(idle_cap):
+            if self.status_active():
+                raise ObsError('busy', 'an OBS recording output is still active; not starting another')
+            raise ObsError('busy', 'the last OBS output file is still growing; not starting another')
+        for attempt in (1, 2):
+            try:
+                self.client.request('StartRecord')
+            except ObsError:
+                if self.status_active():
+                    return self._until_active(active_cap)
+                if attempt == 2:
+                    raise
+                time.sleep(2.0)
+                self.wait_idle(idle_cap)
+                continue
+            return self._until_active(active_cap)
+
+    def _until_active(self, cap):
+        until = time.monotonic() + cap
+        while time.monotonic() < until:
+            if self.status_active():
+                return time.time()
+            time.sleep(0.1)
+        raise ObsError('not_recording', f'StartRecord answered but OBS was not recording after {cap} s')
+
+    def stop_confirmed(self, cap=15.0):
+        """(path, finalized, was_active): StopRecord, then wait until outputActive is false and the file's size has
+        held for 1 s. A refused stop (501 "not recording" or 500) is reconciled with GetRecordStatus: inactive =
+        nothing to stop; still active = one more StopRecord after 0.5 s."""
+        path = None
+        for attempt in (1, 2):
+            try:
+                path = self.client.request('StopRecord').get('outputPath')
+                break
+            except ObsError:
+                if not self.status_active():
+                    return None, False, False
+                if attempt == 2:
+                    raise
+                time.sleep(0.5)
+        return path, self.wait_finalized(path, cap=cap), True
+
+    def newest_output(self):
+        """The newest file in OBS's record directory (the output a start must not race), or None."""
+        try:
+            folder = Path(self.client.request('GetRecordDirectory').get('recordDirectory') or '')
+        except ObsError:
+            return None
+        try:
+            files = [p for p in folder.iterdir() if p.suffix.lower() in ('.mp4', '.mkv', '.mov', '.flv')]
+        except OSError:
+            return None
+        return max(files, key=lambda p: p.stat().st_mtime) if files else None
+
+    def wait_idle(self, cap=20.0, poll=0.25, stable_s=1.0):
+        """True once no record output is active and the newest output file's size has held for stable_s."""
+        until = time.monotonic() + cap
+        held_since, last = None, None
+        while time.monotonic() < until:
+            if self.client.request('GetRecordStatus').get('outputActive'):
+                held_since, last = None, None
+            else:
+                newest = self.newest_output()
+                size = newest.stat().st_size if newest and newest.is_file() else None
+                if size is None:
+                    return True
+                if size != last or held_since is None:
+                    held_since, last = time.monotonic(), size
+                elif time.monotonic() - held_since >= stable_s:
+                    return True
+            time.sleep(poll)
+        return False
+
+    def wait_finalized(self, path, cap=15.0, poll=0.2, stable_s=1.0):
         """StopRecord answers before OBS has finished the file (an MP4 writes its index last), so a clip read at
         once can decode no frames at all (hw-run-2, 2026-11-16: every clip under ~3 s, "no frames decoded").
-        Wait until the record output is no longer active and the file's size holds for one poll. False at the cap
-        (the caller still tries the file)."""
+        Wait until the record output is no longer active and the file's size has held for stable_s. False at the
+        cap (the caller still tries the file)."""
         until = time.monotonic() + cap
-        last = None
+        last, held_since = None, None
         while time.monotonic() < until:
             active = self.client.request('GetRecordStatus').get('outputActive')
             size = Path(path).stat().st_size if path and Path(path).is_file() else None
-            if not active and size is not None and size == last:
+            if active or size is None:
+                last, held_since = None, None
+            elif size != last:
+                last, held_since = size, time.monotonic()
+            elif time.monotonic() - held_since >= stable_s:
                 return True
-            last = None if active else size
             time.sleep(poll)
         return False
 
