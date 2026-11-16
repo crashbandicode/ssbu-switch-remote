@@ -10,6 +10,13 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **~14:55Z LEGEND INSTALLED (INBOX 39952):** TR `de563644` → `80bb1203` (ffd2f74a release), ok/readback True, 20 others
+  unchanged; rollback on card `ultimate/switch-remote/backups/pre-80bb12036ce0e0f0.libtraining_rooms.nro` + local
+  `card-jobs/l1-tr-legend/before/…`; receipts `artifacts/switch-remote-card/install-l1-tr-legend/`. Console HOME/SSBU.
+  **Card now = TR legend ffd2f74a + Deluxe 0.10.8 + 17 others (19).** Gap worker filling LEG-01..05 (+ SC-02 drill grading
+  added; PF-01 footer = review shot; dry-run READY ~1.52 h). NEXT: when LEG rows are in → launch the ONE session (a session
+  worker), post the start + first 15, showcase PASS/FAIL lines, progress ~30 min, results; cut with
+  `tools/host/cut_session.py <out>`.
 - **~14:20Z READY TO LAUNCH, gated on the legend.** LIVE RECORDING PROOF PASS (INBOX 39830; client 91512f5, playbook 16cc318,
   cutter ebde113 `tools/host/cut_session.py`). The legend install is fully staged: `card-jobs/l1-tr-legend/STEPS.md` (exact
   commands A-D + rollback + the INSTALL.md template). Watchers in this session: the INBOX `^## .*LEGEND RELEASE READY` (not
