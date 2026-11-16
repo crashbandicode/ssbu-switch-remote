@@ -12,6 +12,12 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 - **~20:20Z HARDWARE TESTING STOPPED (the operator).** Console idle in Training (SSBU running); pad reset + stale claim
   released via `switch_hw.py down artifacts/switch-hw-feature-ledger/run-1`; OBS idle.
+  - **~20:55Z the operator: "build it and test it on the switch directly"**: at the GO (the NRO path + sha), run
+    `& '/home/user/ssbu-switch-remote-work/card-jobs/r1-tr-hwreship-diag/run_install.ps1' -Nro <p> -Sha <s> -GoQuote '<go>' -Phase stage`;
+    close SSBU interactively (pad_nav: b, still, home, x, still, a --close-dialog); then `… -Phase ftp` (route in →
+    preflight with a TR=80bb1203 check → install → route out → receipts to artifacts/switch-remote-card/install-r1-tr-hwreship/).
+    Then start skyline_tcplog BEFORE the gated launch, launch → profile → main → Training, open the TR menu and still the
+    FOOTER (expect the new build tag); release; post "RESHIP ON CARD <sha>"; hand the console to switch-hw-opus.
   - **~20:45Z CHANGED: the reship = the RELEASE NRO of rc15/hw-reship** (the operator: "forget the log build just do a
     normal one"); the job `card-jobs/r1-tr-hwreship-diag/` order/README updated (the dir name is historical). The
     Skyline-loader identity request is cancelled (the doc stays at artifacts/rc15-hw-reship/CARD-SKYLINE-LOADER.md).
