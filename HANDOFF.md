@@ -8,6 +8,26 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 - **Evidence root:** `/home/user/smash-training-lobby/artifacts/switch-remote-card/`.
 - **INBOX (where every post goes):** `/home/user/smash-training-lobby/artifacts/phase23/INBOX-opus-rc6-integration.md`.
 
+## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
+
+- **12:00Z DONE, summary posted (INBOX line 38547):** g1 Deluxe 0.10.8 installed (`card-jobs/g1b-deluxe-0.10.8`, ok, 20
+  others unchanged, rollback `ultimate/switch-remote/backups/pre-30cb25ddea78b2f1.…`); Smoke B PASS (main menu, 19 mains
+  `(0x0)`, Deluxe `0.10.8-e7720fd64c92`). Console on HOME, SSBU selected. Waiting for the primary's next order.
+- **11:55Z Smoke A PASS** (launch-1): card = TR rc.15 + Deluxe 0.10.7 + 17 others (19 NROs; the primary REMOVED our r1 NRO
+  over Hekate UMS at 11:46Z, `artifacts/switch-remote-card/remove-r1-nro-ums/INSTALL.md`). Boot: splash → SaltyNX → movie
+  (~t+60 s) → title (~t+200 s) → Start×2 → main menu (`ssbu-switch-remote-work/launch-1/shots/08-to-main.png`) →
+  B, HOME, X → Close dialog (`09`) → A `--close-dialog` → HOME, SSBU selected (`11`).
+- **Skyline TCP log** `artifacts/switch-remote-card/skyline-tcp-launch-1.log`: all 19 `Loaded`, every `main` `Finished
+  (0x0)`, TR prints `plugin=training_rooms/0.2.0-rc.15 …` (line ~652) and `cpu_common_load … cpu_common=installed`.
+- **HOME works** (11:49Z: HOME from hbmenu → HOME menu; `home-test-1/shots/14`). Wire check 18/18 PASS (INBOX 11:39Z).
+  The 05:15Z hang was NOT a pad fault and did not recur after the reboot with r1 removed.
+- **Operator rule (11:5xZ): drive at Eden speed.** Chain presses in one UART session (`/tmp/sr2-pad-probe.py STILL SETTLE
+  "press x 100" sleep:0.6 …`, recreate if /tmp cleared), stills only at gates; skip movies with Start (ROUTES `to_main`).
+  The image-gated SSBU A (`pad_nav.py --launch-ssbu`) and the `--close-dialog` A stay. `pad_nav.py` now allows `x`.
+- **Next (primary's order):** FTP read TR events.log (rc.15 install line) → g1 Deluxe 0.10.8 under its conditions with **19
+  plugins expected** (new job dir, e.g. `card-jobs/g1b-deluxe-0.10.8`; re-preflight must match the 19-plugin table) →
+  Smoke B → ONE summary post.
+
 ## 0. Where things stand (read first)
 
 - **The input route is an ESP32-S3 wired pad** (firmware switch-pad 0.1.2) in the Switch dock, driven from the Surface

@@ -20,7 +20,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 ALLOWED = {'up': 'up', 'down': 'down', 'left': 'left', 'right': 'right', 'b': 'b', 'plus': 'plus', 'home': 'home',
-           'a': 'a'}
+           'a': 'a', 'x': 'x'}  # x: "Close software" on the HOME menu (the dialog's A is guarded by --close-dialog)
 
 
 def game_row_selected(path):
