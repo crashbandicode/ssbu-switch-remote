@@ -456,7 +456,7 @@ the kit with camera and SD card): `C/C_Tutorial.pdf` p.145 "Difference between U
   - or `usermod -aG dialout`.
 
 **Built and host-tested 2026-11-16** (details in §10): the firmware at `433f357`, 0 warnings; core 84 checks;
-the `usb://` client against the pty simulator, including device-clock macro timing within ±3 ms and the 1 s
+the `usb://` client against the pty simulator, including device-clock macro timing (within ±3 ms when the host is idle, ±10 ms asserted under load: the simulator is not real-time) and the 1 s
 watchdog; flashing against a fake esptool.
 
 **Flashing.** `tools/host/flash_pad.py` (via `resume_smoke.ps1 -Phase flash`) runs esptool 4.13.0 (a pinned venv on the host the board is plugged into) over the
