@@ -10,6 +10,11 @@ Written 2026-11-16 ~05:40Z for a fresh session; updated ~05:50Z (Skyline TCP log
 
 ## 00. switch-remote-2 progress (2026-11-16, newest first; supersedes §0/§3/§4 where they differ)
 
+- **11-17 00:21Z RESHIP-2 ON CARD + VERIFIED:** TR `85e8adef` → **`589184a3…e3ce2d`** (rc15/hw-reship-2 ccd9befd release,
+  the projectile fix); footer `0.2.0-rc.15 · rc15 ccd9befd`. Job `card-jobs/r2-tr-hwreship2/` (run_install.ps1 clone with
+  the guard TR=85e8adef); receipts `artifacts/switch-remote-card/install-r2-tr-hwreship2/`; rollbacks on card
+  `pre-589184a3861cc121.*` (=85e8adef) + `pre-85e8adefd2e32ada.*` (=80bb1203) + local. **Card = TR ccd9befd + Deluxe
+  0.10.8 + tile cursor + 17.** A 4 s settle after closing SSBU avoids the swallowed first route press.
 - **21:21Z RESHIP ON CARD + VERIFIED:** TR `80bb1203` → **`85e8adef…5553e5`** (rc15/hw-reship 9f683363 release); footer
   `0.2.0-rc.15 · rc15 9f683363` in Training. Receipts `artifacts/switch-remote-card/install-r1-tr-hwreship/`; rollback on
   card `ultimate/switch-remote/backups/pre-85e8adefd2e32ada.libtraining_rooms.nro` + locally. **Card = TR 9f683363 +
