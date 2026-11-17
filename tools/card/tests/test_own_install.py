@@ -160,6 +160,28 @@ class Card(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_tool('preflight', str(j6))
 
+    def test_ldn_mitm_install_and_rollback(self):
+        ldn = 'atmosphere/contents/4200000000000010'
+        cfg = 'switch/ldnmitm_config/ldnmitm_config.nro'
+        files = {f'{ldn}/exefs.nsp': b'PFS0 ldn', f'{ldn}/toolbox.json': b'{"requires_reboot": true}',
+                 f'{ldn}/flags/boot2.flag': b'', cfg: b'NRO0 cfg'}
+        j = self.job('ldn1', files)
+        self.run_tool('preflight', str(j))
+        self.assertEqual(self.run_tool('install', str(j)), 0)
+        self.assertTrue(json.loads((j / 'install-receipt.json').read_text())['ok'])
+        for path, data in files.items():
+            self.assertEqual((self.card / path).read_bytes(), data)
+        jr = self.job('ldn1-rm', {})
+        (jr / 'remove.txt').write_text('\n'.join(files) + '\nswitch/.overlays/ldnmitm_config.ovl\n')
+        self.run_tool('preflight', str(jr))
+        self.assertEqual(self.run_tool('install', str(jr)), 0)
+        for path in files:
+            self.assertFalse((self.card / path).exists())
+        # Anything else under its folder is still refused.
+        jb = self.job('ldn1-bad', {f'{ldn}/main': b'x'})
+        with self.assertRaises(SystemExit):
+            self.run_tool('preflight', str(jb))
+
     def test_remove_list_deletes_only_allowlisted_files_with_receipts(self):
         (self.card / AP_FLAG).parent.mkdir(parents=True)
         (self.card / AP_FLAG).write_bytes(b'')

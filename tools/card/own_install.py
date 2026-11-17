@@ -67,6 +67,15 @@ ALLOWED = (
     'config/ns-autoverify/disabled',
     'config/ns-autoverify/verify-now',
     'switch/nsav-probe/nsav-probe.nro',
+    # ldn_mitm (DefenderOfHyrule v1.22.2, "1.12.2/23.X.X Compatibility", zip sha256 a216feec…), for the
+    # switch<-eden local-wireless session (ldn-2console). Wire protocol files identical to spacemeowx2 9a2639ef,
+    # the pin the Eden ldn_mitm backend implements. toolbox requires_reboot=true: one stage, boot2.flag included,
+    # reboot ordered by the operator/primary. Operator approval: operator yes 2026-11-17 ~13:56Z (primary).
+    'atmosphere/contents/4200000000000010/exefs.nsp',
+    'atmosphere/contents/4200000000000010/toolbox.json',
+    'atmosphere/contents/4200000000000010/flags/boot2.flag',
+    'switch/ldnmitm_config/ldnmitm_config.nro',
+    'switch/.overlays/ldnmitm_config.ovl',
 )
 # remove.txt may delete the same files (e.g. our sysmodule's boot2.flag when sys-autopilot takes over, option d).
 REMOVABLE = ALLOWED
