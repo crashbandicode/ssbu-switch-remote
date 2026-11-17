@@ -105,7 +105,7 @@ GcReport make_gc_report(const PadOut& s) {
 
 GcReport neutral_gc_report() { return make_gc_report(PadOut{}); }
 
-void reply_err(sr::LineBuf<192>& out, std::string_view code, std::string_view detail = {});
+void reply_err(sr::LineBuf<256>& out, std::string_view code, std::string_view detail = {});
 
 void Pad::reset_live() {
     for (auto& d : button_deadline_) d = 0;
@@ -171,7 +171,7 @@ void Pad::output_report(uint8_t report_id, const uint8_t* data, uint16_t len) {
     if (report_id == kGcRumble && len >= 1) gc_rumble_ = data[0];
 }
 
-void reply_err(sr::LineBuf<192>& out, std::string_view code, std::string_view detail) {
+void reply_err(sr::LineBuf<256>& out, std::string_view code, std::string_view detail) {
     out.put("ERR ");
     out.put(code);
     if (!detail.empty()) {
@@ -181,7 +181,7 @@ void reply_err(sr::LineBuf<192>& out, std::string_view code, std::string_view de
 }
 
 // In GC mode, live input that names a button the GameCube pad lacks is refused (macros drop such bits instead).
-bool Pad::refuse_unmapped(uint32_t bits, sr::LineBuf<192>& out) const {
+bool Pad::refuse_unmapped(uint32_t bits, sr::LineBuf<256>& out) const {
     if (mode_ != Mode::Gc) return false;
     for (int i = 0; i < kBits; i++)
         if ((bits >> i & 1) && gc_button(i) == 0) {
@@ -270,7 +270,7 @@ static size_t fields(std::string_view line, std::string_view (&f)[N]) {
     return n;
 }
 
-bool Pad::set_mode(std::string_view name, sr::LineBuf<192>& out) {
+bool Pad::set_mode(std::string_view name, sr::LineBuf<256>& out) {
     Mode m;
     if (name == "pro") {
         m = Mode::Pro;
@@ -298,7 +298,7 @@ bool Pad::set_mode(std::string_view name, sr::LineBuf<192>& out) {
     return true;
 }
 
-bool Pad::v0(std::string_view line, uint64_t now, sr::LineBuf<192>& out) {
+bool Pad::v0(std::string_view line, uint64_t now, sr::LineBuf<256>& out) {
     std::string_view f[5];
     size_t n = fields(line, f);
     if (n == 0) return false;
@@ -370,7 +370,7 @@ bool Pad::v0(std::string_view line, uint64_t now, sr::LineBuf<192>& out) {
 }
 
 // MODE, TRIG and MEV with analog triggers (9 fields): firmware-local lines that sr::parse_request does not know.
-bool Pad::gc_line(std::string_view line, uint64_t now, sr::LineBuf<192>& out) {
+bool Pad::gc_line(std::string_view line, uint64_t now, sr::LineBuf<256>& out) {
     std::string_view f[9];
     size_t n = fields(line, f);
     if (n == 0) return false;
@@ -414,7 +414,7 @@ bool Pad::gc_line(std::string_view line, uint64_t now, sr::LineBuf<192>& out) {
 // `BTN 18|19 press|release|tap <ms>`: HOME and CAPTURE, which sr::parse_request refuses (it guards the
 // sysmodule's gated path). The wired pad has no gate (primary direction 2026-11-16); the host uses these
 // only inside its still-checked LAUNCH / TERMINATE / DISMISS sequences. A GameCube pad has neither.
-bool Pad::system_button(std::string_view line, uint64_t now, sr::LineBuf<192>& out) {
+bool Pad::system_button(std::string_view line, uint64_t now, sr::LineBuf<256>& out) {
     if (line.substr(0, 7) != "BTN 18 " && line.substr(0, 7) != "BTN 19 ") return false;
     int bit = line[5] == '8' ? kHome : kCapture;
     if (refuse_unmapped(1u << bit, out)) return true;
@@ -442,7 +442,7 @@ bool Pad::system_button(std::string_view line, uint64_t now, sr::LineBuf<192>& o
     return true;
 }
 
-void Pad::handle(std::string_view line, uint64_t now, sr::LineBuf<192>& out) {
+void Pad::handle(std::string_view line, uint64_t now, sr::LineBuf<256>& out) {
     out.clear();
     last_rx_ = now;
     rx_seen_ = true;
@@ -499,6 +499,8 @@ void Pad::handle(std::string_view line, uint64_t now, sr::LineBuf<192>& out) {
                 out.put(" gc_rumble=");
                 out.put_u64(gc_rumble_);
             }
+            out.put(" mounts=");
+            out.put_u64(mounts_);
             return;
         }
         case sr::Method::Button:

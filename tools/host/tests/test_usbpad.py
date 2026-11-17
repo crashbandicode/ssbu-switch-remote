@@ -72,10 +72,10 @@ class Link(Base):
     def test_connects_through_boot_noise_and_answers(self):
         self.assertEqual(self.c.request('ping')['ok'], True)
         v = self.c.request('switch.version')['result']['reply']
-        self.assertEqual(v, 'OK version switch-pad 0.2.0 usb=hori-0f0d:0092')
+        self.assertEqual(v, 'OK version switch-pad 0.2.1 usb=hori-0f0d:0092')
         s = self.c.request('status')['result']
         self.assertEqual((s['backend'], s['state'], s['fw'], s['usb'], s['usb_mounted'], s['gate']),
-                         ('usb', 'reachable', 'switch-pad/0.2.0', 'hori-0f0d:0092', '1', 'not_applicable'))
+                         ('usb', 'reachable', 'switch-pad/0.2.1', 'hori-0f0d:0092', '1', 'not_applicable'))
         self.assertIsNone(s['running'])  # no scene receiver: unknown (information only)
 
     def test_make_client_usb_scheme(self):
@@ -184,7 +184,7 @@ class GcMode(Base):
                          ('gc', True, 'gc-adapter-057e:0337', '1'))
         self.assertGreaterEqual(res['switch_s'], 0.5)  # the detach
         self.assertEqual(self.c.request('switch.version')['result']['reply'],
-                         'OK version switch-pad 0.2.0 usb=gc-adapter-057e:0337')
+                         'OK version switch-pad 0.2.1 usb=gc-adapter-057e:0337')
         self.assertEqual(self.wait_gc(lambda g: True), GC_NEUTRAL)
         modes = [r for r in self.reports() if 'mode' in r]
         self.assertEqual([m['mode'] for m in modes], ['gc'])
@@ -196,6 +196,7 @@ class GcMode(Base):
         self.assertEqual(self.reports()[-1]['r'], NEUTRAL)
         st = self.c.request('status')['result']
         self.assertEqual(st['mode'], 'pro')
+        self.assertEqual((res['mounts'], back['mounts'], st['mounts']), ('2', '3', '3'))  # one per enumeration
         # Pro mode drives the HORI report exactly as before.
         self.c.request('input.button', {'button': 'a', 'state': 'press', 'lease_ms': 300})
         self.wait_report(lambda r: r[0] == 0x04)
@@ -351,7 +352,7 @@ class PiLink(unittest.TestCase):
         c = self.client()
         try:
             self.assertTrue(c.request('input.button', {'button': 'a', 'duration_ms': 100})['ok'])
-            self.assertEqual(c.request('switch.version')['result']['reply'][:30], 'OK version switch-pad 0.2.0 us')
+            self.assertEqual(c.request('switch.version')['result']['reply'][:30], 'OK version switch-pad 0.2.1 us')
             time.sleep(0.2)
             self.assertTrue(any(r[0] == 0x04 for r in self.reports()))
             self.assertEqual(c.request('status')['result']['backend'], 'usb')

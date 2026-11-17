@@ -86,6 +86,7 @@ int main(int argc, char** argv) {
 
     static swpad::Pad pad;  // ~70 KB (the macro buffer): static, as on the device
     pad.set_usb_mounted(true);
+    pad.count_mount();  // "the console" enumerated the pad at start
     const uint64_t t0 = now_us();
     std::string line;
     bool authed = tcp_port < 0;
@@ -133,7 +134,7 @@ int main(int argc, char** argv) {
                     }
                     authed = true;
                 }
-                sr::LineBuf<192> out;
+                sr::LineBuf<256> out;
                 pad.handle(line, now_us() - t0, out);
                 line.clear();
                 swpad::Mode next;
@@ -159,6 +160,7 @@ int main(int argc, char** argv) {
             if (now < detach_until) continue;  // detached: no reports
             detach_until = 0;
             pad.set_usb_mounted(true);  // "the console" re-enumerated the new personality
+            pad.count_mount();
             if (pad.mode() == swpad::Mode::Gc) {
                 const uint8_t init[] = {swpad::kGcInit};
                 pad.output_report(0, init, 1);  // and starts the adapter, as the Switch does

@@ -128,7 +128,7 @@ void uart_task(void*) {
     static char line[512];
     size_t n = 0;
     uint8_t buf[256];
-    sr::LineBuf<192> out;
+    sr::LineBuf<256> out;
     for (;;) {
         int got = uart_read_bytes(kUart, buf, sizeof buf, pdMS_TO_TICKS(20));
         for (int i = 0; i < got; i++) {
@@ -198,7 +198,12 @@ void usb_task(void*) {
 }  // namespace
 
 // The console configured the device: after a mode switch this is the new personality's enumeration.
-extern "C" void tud_mount_cb(void) { g_enumerated = true; }
+extern "C" void tud_mount_cb(void) {
+    xSemaphoreTake(g_lock, portMAX_DELAY);
+    g_pad.count_mount();
+    xSemaphoreGive(g_lock);
+    g_enumerated = true;
+}
 
 extern "C" uint8_t const* tud_hid_descriptor_report_cb(uint8_t) {
     return g_device.idVendor == kGcDevice.idVendor ? kGcReport : kProReport;

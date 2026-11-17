@@ -17,7 +17,7 @@ static int failures = 0, checks = 0;
     } while (0)
 
 static std::string say(Pad& p, std::string_view line, uint64_t now) {
-    sr::LineBuf<192> out;
+    sr::LineBuf<256> out;
     p.handle(line, now, out);
     return std::string(out.view());
 }
@@ -68,7 +68,7 @@ static void sticks_scale_and_y_points_down() {
 static void leases_and_protocol() {
     Pad p;
     CHECK(say(p, "AUTH anything", 0) == "OK auth switch-pad");
-    CHECK(say(p, "VERSION", 0) == "OK version switch-pad 0.2.0 usb=hori-0f0d:0092");
+    CHECK(say(p, "VERSION", 0) == "OK version switch-pad 0.2.1 usb=hori-0f0d:0092");
     CHECK(say(p, "PING", 5 * MS) == "OK pong 5");
     CHECK(say(p, "BTN 0 press 100", 10 * MS) == "OK");
     CHECK(p.report(50 * MS).b[0] == 0x04);
@@ -91,7 +91,7 @@ static void leases_and_protocol() {
     CHECK(say(p, "NONSENSE", 970 * MS).rfind("ERR", 0) == 0);
     CHECK(say(p, "", 970 * MS).empty());
     std::string st = say(p, "STATUS", 980 * MS);
-    CHECK(st.rfind("OK status fw=switch-pad/0.2.0 usb=hori-0f0d:0092 usb_mounted=0 uptime_ms=980", 0) == 0);
+    CHECK(st.rfind("OK status fw=switch-pad/0.2.1 usb=hori-0f0d:0092 usb_mounted=0 uptime_ms=980", 0) == 0);
     CHECK(st.find("macro=idle") != std::string::npos);
     CHECK(say(p, "BYE", 990 * MS) == "OK bye");
 }
@@ -165,7 +165,7 @@ static void v0_verbs() {
     CHECK(r.b[3] == 192 && r.b[4] == 1);
     CHECK(p.report(1301 * MS) == neutral_report());
     CHECK(say(p, "stick -1 -1 100", 1400 * MS) == "OK" && p.report(1450 * MS).b[3] == 1);
-    CHECK(say(p, "status", 1500 * MS).rfind("OK status fw=switch-pad/0.2.0", 0) == 0);
+    CHECK(say(p, "status", 1500 * MS).rfind("OK status fw=switch-pad/0.2.1", 0) == 0);
     CHECK(say(p, "press sl_left 100", 1500 * MS) == "ERR unknown_button sl_left");
     CHECK(say(p, "press q 100", 1500 * MS) == "ERR unknown_button q");
     CHECK(say(p, "press a", 1500 * MS).rfind("ERR bad_arguments", 0) == 0);
@@ -247,10 +247,10 @@ static void gc_mode_switching() {
     CHECK(p.take_mode_change(next) && next == Mode::Gc && !p.take_mode_change(next));
     CHECK(p.mode() == Mode::Gc && p.gc_report(20 * MS) == neutral_gc_report());
     CHECK(say(p, "MSTATUS", 20 * MS).rfind("OK macro state=idle", 0) == 0);
-    CHECK(say(p, "VERSION", 20 * MS) == "OK version switch-pad 0.2.0 usb=gc-adapter-057e:0337");
+    CHECK(say(p, "VERSION", 20 * MS) == "OK version switch-pad 0.2.1 usb=gc-adapter-057e:0337");
     std::string st = say(p, "STATUS", 30 * MS);
     CHECK(st.find("usb=gc-adapter-057e:0337 usb_mounted=0 ") != std::string::npos);
-    CHECK(st.find(" macro=idle mode=gc gc_init=0 gc_rumble=0") == st.size() - 41);
+    CHECK(st.find(" macro=idle mode=gc gc_init=0 gc_rumble=0 mounts=0") == st.size() - 50);
     // The console's output reports: 0x13 init (with or without a report ID), 0x11 rumble.
     const uint8_t init[] = {0x13};
     const uint8_t rumble[] = {0x01, 0x00, 0x00, 0x00};
@@ -268,6 +268,18 @@ static void gc_mode_switching() {
     p.output_report(0, init, 1);
     CHECK(p.gc_inits() == 2);
     CHECK(say(p, "BTN 0 tap 100", 80 * MS) == "OK" && p.report(90 * MS).b[0] == 0x04);
+    // One mount per enumeration (the glue's tud_mount_cb); the longest STATUS is not truncated.
+    p.count_mount();
+    p.count_mount();
+    std::string pro = say(p, "STATUS", 100 * MS);
+    CHECK(pro.size() > 18 && pro.substr(pro.size() - 18) == " mode=pro mounts=2");
+    CHECK(say(p, "MODE gc", 110 * MS) == "OK mode gc switching" && p.take_mode_change(next));
+    for (int i = 0; i < 99999; i++) p.output_report(0x13, nullptr, 0);
+    std::string longest = say(p, "STATUS", 9999999999999999ull);  // 13-digit uptime_ms
+    const std::string tail = " uptime_ms=9999999999999 ";
+    CHECK(longest.find(tail) != std::string::npos);
+    CHECK(longest.size() > 36 && longest.substr(longest.size() - 36) == " gc_init=100001 gc_rumble=0 mounts=2");
+    CHECK(longest.size() < 256);
 }
 
 static void gc_mode_input() {

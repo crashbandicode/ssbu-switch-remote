@@ -10,8 +10,8 @@ mapped single-trigger chord work again. CH-F004 (the GameCube button mapping) ca
 
 - **Two USB personalities, one firmware.**
   - **Pro mode** (the default at power-up): the HORI POKKEN CONTROLLER (0F0D:0092) as today. Its descriptors,
-    report bytes, timing and protocol replies are unchanged, apart from two additions: `VERSION` reports 0.2.0, and
-    `STATUS` has a trailing `mode=pro`.
+    report bytes, timing and protocol replies are unchanged, apart from two additions: `VERSION` reports 0.2.x, and
+    `STATUS` has a trailing `mode=pro mounts=N`.
   - **GC mode**: the board presents itself as a **GameCube Controller Adapter** (Wii U / Switch style, 057E:0337).
     Port 1 is our pad; ports 2-4 are empty.
 - **Runtime switch, no reflash.** The UART line `MODE gc` or `MODE pro` (or the v0 verb `mode gc`) does this:
@@ -105,8 +105,8 @@ Switch back first.
 | `TRIG <l 0-255> <r 0-255> <ms 1-10000>` | `OK` | GC mode only (`ERR wrong_mode` in Pro); analog trigger lease; a held `zl`/`zr` still means 255 |
 | `trig <l 0..1> <r 0..1> <ms>` | `OK` | the v0 form |
 | `MEV <frame> <buttons> <lx> <ly> <rx> <ry> [<lt> <rt>]` | as MEV | optional analog triggers 0-255 per sample (ignored in Pro mode) |
-| `VERSION` | `OK version switch-pad 0.2.0 usb=hori-0f0d:0092` or `usb=gc-adapter-057e:0337` | |
-| `STATUS` | as before + ` mode=pro` or ` mode=gc gc_init=N gc_rumble=N` | `usb_mounted=0` from the detach until the new enumeration |
+| `VERSION` | `OK version switch-pad 0.2.1 usb=hori-0f0d:0092` or `usb=gc-adapter-057e:0337` | |
+| `STATUS` | as before + ` mode=pro mounts=N` or ` mode=gc gc_init=N gc_rumble=N mounts=N` (`mounts`: one per console enumeration; 0.2.1) | `usb_mounted=0` from the detach until the new enumeration |
 
 v0 button names also take `z` (= r), `gc_l`/`gc_r` (= zl/zr) and `start` (= plus, already).
 
@@ -121,7 +121,8 @@ v0 button names also take `z` (= r), `gc_l`/`gc_r` (= zl/zr) and `start` (= plus
     **non-zero** trigger value gets MEV lines with the two extra fields. Eden recordings carry `"triggers": [0, 0]`, so
     they and all existing macros produce byte-identical lines (the sysmodule accepts only the six-field MEV).
 - **`usbpad.py`.**
-  - `pad.mode` (`{"mode": "gc"|"pro"}`) sends `MODE …`, then waits up to 10 s for `usb_mounted=1` in the new mode.
+  - `pad.mode` (`{"mode": "gc"|"pro"}`) sends `MODE …`, then waits up to 30 s for `usb_mounted=1` in the new mode (on hardware the
+    console took more than 10 s to configure the adapter, 2026-11-17).
   - `input.trigger` (`{"l": 0..1, "r": 0..1, "lease_ms": N}`) sends `TRIG`.
   - CLI: `switch_remote.py --backend usb --host /dev/ttyACM0 mode gc|pro`.
   - `hwstep.py` passes `mode gc` / `mode pro` / `trig …` through unchanged.
@@ -159,7 +160,7 @@ v0 button names also take `z` (= r), `gc_l`/`gc_r` (= zl/zr) and `start` (= plus
    - It records the sha256 and checks that the bootloader and app regions match the `f9208f2` build images
      (`ssbu-switch-remote-work/pad/f9208f2/build.json`). It writes `backup-receipt.json`.
    - Reading resets the board (the console sees the pad unplugged for about 30 s).
-3. **Flash.** `flash_pad.py --build <0.2.0 build> --out <receipt> --expect-version 0.2.0` (esptool hash-verified
+3. **Flash.** `flash_pad.py --build <0.2.x build> --out <receipt> --expect-version 0.2.x` (esptool hash-verified
    regions; VERSION after reset).
 4. **Prove Pro mode first.**
    - A still on HOME.
@@ -186,3 +187,22 @@ In Training with TR and Online Deluxe loaded, 1P:
 4. Release one trigger and retry the mapped single-trigger chord (e.g. L + D-down save). **Expected:** it works (the
    save notice).
 5. `mode pro` → `STATUS mode=pro usb_mounted=1`, then a still and one menu move prove Pro mode again.
+
+## Hardware log
+
+- **2026-11-17 14:40Z: 0.2.0 (4c38f47) flashed.**
+  - The backup holds f9208f2 exactly; esptool verified all three regions.
+  - Pro smoke PASS: boot default Pro, mounted; HOME menu moves; one A opened System → Controllers, which lists the pad
+    as a USB Pro Controller, player 1.
+- **14:41:5xZ: `mode gc` from the Controllers screen.**
+  - The host gave up at 10 s, but STATUS then showed `usb=gc-adapter-057e:0337 usb_mounted=1 gc_init=1`: the console
+    accepted our descriptors and sent the adapter init 0x13, more than 10 s after the attach.
+  - `mode pro` mounted in 4.2 s.
+  - The operator was rebooting the console by hand at about 14:42Z (after the ldn_mitm install). HDMI showed No Signal,
+    so the timing is confounded and GC mode is **not yet passed**.
+- **Follow-ups (0.2.1):**
+  - the host waits 30 s for a mode switch;
+  - STATUS `mounts=` counts the console's enumerations (a reboot shows up);
+  - the reply buffer is 256 bytes (the longest GC STATUS fits; tested).
+- **Retest rule:** GC only from the HOME menu, with video confirmed in a still first (no applet open), in a window the
+  primary gives. A failure runs `mode pro` at once.

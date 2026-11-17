@@ -36,7 +36,7 @@ from sequences import LAUNCH_QUIET_MS, HomeSequences
 from switch_remote import Connection, SwitchClient, SwitchError, parse_kv, read_token, trigger_value
 
 BAUD = 921600
-MODE_TIMEOUT_S = 10.0
+MODE_TIMEOUT_S = 30.0  # the console took >10 s to configure the adapter on hardware (2026-11-17 14:42Z)
 KEEPALIVE_S = 0.3
 SETTLE_S = 1.5
 SERIAL_TOKEN = 'serial-link-no-token'  # the firmware accepts AUTH: the link is physical
@@ -257,7 +257,7 @@ class UsbClient(HomeSequences, SwitchClient):
             kv = parse_kv(self._sys('STATUS'))
             if kv.get('mode') == parts[2] and kv.get('usb_mounted') == '1':
                 out.update({'mounted': True, 'switch_s': round(time.monotonic() - t0, 3),
-                            'usb': kv.get('usb'), 'gc_init': kv.get('gc_init')})
+                            'usb': kv.get('usb'), 'gc_init': kv.get('gc_init'), 'mounts': kv.get('mounts')})
                 return out
         raise SwitchError('mode_not_mounted', f'{parts[2]} not enumerated by the console within {timeout_s} s '
                           f'(usb_mounted={kv.get("usb_mounted")}); `mode pro` returns to the HORI pad')

@@ -21,7 +21,7 @@
 namespace swpad {
 
 constexpr std::string_view kName = "switch-pad";
-constexpr std::string_view kVersion = "0.2.0";
+constexpr std::string_view kVersion = "0.2.1";
 constexpr std::string_view kUsbIdentity = "hori-0f0d:0092";
 constexpr std::string_view kGcUsbIdentity = "gc-adapter-057e:0337";
 constexpr uint64_t kFreq = 1000000;          // timestamps are microseconds
@@ -74,7 +74,7 @@ GcReport neutral_gc_report();
 class Pad {
 public:
     // One host line (without LF). The reply, if any, goes to `out` (MEV success has none).
-    void handle(std::string_view line, uint64_t now, sr::LineBuf<192>& out);
+    void handle(std::string_view line, uint64_t now, sr::LineBuf<256>& out);
     // The state at `now`; applies leases, the macro and the watchdog.
     PadOut state(uint64_t now);
     // The Pro-mode report at `now` (byte-identical to 0.1.2).
@@ -96,6 +96,10 @@ public:
 
     void set_usb_mounted(bool m) { usb_mounted_ = m; }
     void count_report() { reports_++; }
+    // The console configured the device (SET_CONFIGURATION): one per enumeration, so a console reboot or a mode switch
+    // shows up in STATUS as `mounts=`.
+    void count_mount() { mounts_++; }
+    uint32_t mounts() const { return mounts_; }
     uint32_t watchdog_trips() const { return trips_; }
     uint32_t gc_inits() const { return gc_inits_; }
     const sr::Macro& macro() const { return macro_; }
@@ -103,11 +107,11 @@ public:
 private:
     void watchdog(uint64_t now);
     void reset_live();
-    bool system_button(std::string_view line, uint64_t now, sr::LineBuf<192>& out);
-    bool v0(std::string_view line, uint64_t now, sr::LineBuf<192>& out);  // press/stick/trig/mode/clear (human verbs)
-    bool gc_line(std::string_view line, uint64_t now, sr::LineBuf<192>& out);  // MODE, TRIG, 8-field MEV
-    bool set_mode(std::string_view name, sr::LineBuf<192>& out);
-    bool refuse_unmapped(uint32_t bits, sr::LineBuf<192>& out) const;
+    bool system_button(std::string_view line, uint64_t now, sr::LineBuf<256>& out);
+    bool v0(std::string_view line, uint64_t now, sr::LineBuf<256>& out);  // press/stick/trig/mode/clear (human verbs)
+    bool gc_line(std::string_view line, uint64_t now, sr::LineBuf<256>& out);  // MODE, TRIG, 8-field MEV
+    bool set_mode(std::string_view name, sr::LineBuf<256>& out);
+    bool refuse_unmapped(uint32_t bits, sr::LineBuf<256>& out) const;
 
     sr::Macro macro_;
     uint8_t macro_trig_[sr::kMacroSamples][2] = {};  // analog triggers per macro sample (MEV's optional lt rt)
@@ -120,7 +124,7 @@ private:
     bool rx_seen_ = false, silent_ = false, usb_mounted_ = false;
     Mode mode_ = Mode::Pro;
     bool mode_pending_ = false;
-    uint32_t trips_ = 0, gc_inits_ = 0, mode_switches_ = 0;
+    uint32_t trips_ = 0, gc_inits_ = 0, mode_switches_ = 0, mounts_ = 0;
     uint8_t gc_rumble_ = 0;
     uint64_t reports_ = 0;
 };
