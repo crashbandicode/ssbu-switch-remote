@@ -114,6 +114,52 @@ class Card(unittest.TestCase):
         self.assertEqual(self.run_tool('install', str(j2)), 0)
         self.assertTrue((self.card / AP_FLAG).exists())
 
+    def test_ns_autoverify_probe_stage1_switches_and_rollback(self):
+        nsav = 'atmosphere/contents/4200000000004156'
+        observe = 'config/ns-autoverify/observe-only'
+        disabled = 'config/ns-autoverify/disabled'
+        probe = 'switch/nsav-probe/nsav-probe.nro'
+        # P0: the probe NRO alone.
+        j0 = self.job('nsav-p0', {probe: b'NRO0 probe'})
+        self.run_tool('preflight', str(j0))
+        self.assertEqual(self.run_tool('install', str(j0)), 0)
+        self.assertEqual((self.card / probe).read_bytes(), b'NRO0 probe')
+        # Stage 1: exefs + toolbox + observe-only, no boot2.flag.
+        j = self.job('nsav-s1', {f'{nsav}/exefs.nsp': b'PFS0 nsav', f'{nsav}/toolbox.json': b'{}', observe: b''})
+        self.run_tool('preflight', str(j))
+        self.assertEqual(self.run_tool('install', str(j)), 0)
+        self.assertTrue(json.loads((j / 'install-receipt.json').read_text())['ok'])
+        self.assertFalse((self.card / nsav / 'flags').exists())
+        # ovlSysmodules' A created the flag: a removal job deletes it.
+        (self.card / nsav / 'flags').mkdir()
+        (self.card / nsav / 'flags' / 'boot2.flag').write_bytes(b'')
+        j2 = self.job('nsav-noflag', {})
+        (j2 / 'remove.txt').write_text(f'{nsav}/flags/boot2.flag\n')
+        self.run_tool('preflight', str(j2))
+        self.assertEqual(self.run_tool('install', str(j2)), 0)
+        self.assertFalse((self.card / nsav / 'flags' / 'boot2.flag').exists())
+        # Active: leave observe-only. Soft rollback: the kill switch.
+        j3 = self.job('nsav-active', {})
+        (j3 / 'remove.txt').write_text(observe + '\n')
+        self.run_tool('preflight', str(j3))
+        self.assertEqual(self.run_tool('install', str(j3)), 0)
+        self.assertFalse((self.card / observe).exists())
+        j4 = self.job('nsav-off', {disabled: b''})
+        self.run_tool('preflight', str(j4))
+        self.assertEqual(self.run_tool('install', str(j4)), 0)
+        self.assertTrue((self.card / disabled).exists())
+        # Full rollback: module files and the probe.
+        j5 = self.job('nsav-rm', {})
+        (j5 / 'remove.txt').write_text(f'{nsav}/exefs.nsp\n{nsav}/toolbox.json\n{nsav}/flags/boot2.flag\n{probe}\n')
+        self.run_tool('preflight', str(j5))
+        self.assertEqual(self.run_tool('install', str(j5)), 0)
+        self.assertFalse((self.card / nsav / 'exefs.nsp').exists())
+        self.assertFalse((self.card / probe).exists())
+        # Anything else under its folder is still refused.
+        j6 = self.job('nsav-bad', {f'{nsav}/main': b'x'})
+        with self.assertRaises(SystemExit):
+            self.run_tool('preflight', str(j6))
+
     def test_remove_list_deletes_only_allowlisted_files_with_receipts(self):
         (self.card / AP_FLAG).parent.mkdir(parents=True)
         (self.card / AP_FLAG).write_bytes(b'')
@@ -172,6 +218,53 @@ class Card(unittest.TestCase):
         self.assertEqual((self.card / row['rollback_copy']).read_bytes(), b'deluxe 0.10.7')
         self.assertEqual((j / 'before' / deluxe).read_bytes(), b'deluxe 0.10.7')
         self.assertEqual((self.card / OTHER).read_bytes(), b'other plugin')
+
+    def test_tr_plugin_install_unchanged_with_sysmodule_allowlist(self):
+        # Regression (ns-autoverify allowlist, 2026-11-17): a TR plugin install behaves exactly as before, even with
+        # the ns-autoverify folder and probe present on the card, and authorized.json still only reaches plugin NROs.
+        tr = OTHER
+        nsav_nsp = 'atmosphere/contents/4200000000004156/exefs.nsp'
+        probe = 'switch/nsav-probe/nsav-probe.nro'
+        for rel, data in ((nsav_nsp, b'PFS0 nsav'), (probe, b'NRO0 probe')):
+            (self.card / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.card / rel).write_bytes(data)
+        new = b'training_rooms rc.16'
+        j = self.job('tr', {tr: new})
+        with self.assertRaises(SystemExit) as cm:
+            self.run_tool('preflight', str(j))
+        self.assertIn('not switch-remote files', str(cm.exception))  # unchanged: TR needs an authorization
+        (j / 'authorized.json').write_text(json.dumps([{'dest': tr, 'sha256': oi.sha(new), 'bytes': len(new),
+                                                        'authorization': 'operator OK (test)', 'source': 'test'}]))
+        self.run_tool('preflight', str(j))
+        pre = json.loads((j / 'preflight-receipt.json').read_text())
+        self.assertEqual(list(pre['files']), [tr])
+        self.assertEqual(pre['files'][tr]['card_sha256_before'], oi.sha(b'other plugin'))
+        self.assertIn(nsav_nsp, pre['watched_before'])  # the module folder is watched, not written
+        with self.assertRaises(SystemExit) as cm:
+            self.run_tool('install', str(j))
+        self.assertIn('go.txt', str(cm.exception))  # unchanged: the go gate
+        self.assertEqual((self.card / tr).read_bytes(), b'other plugin')
+        (j / 'go.txt').write_text('primary OK (test)')
+        self.assertEqual(self.run_tool('install', str(j)), 0)
+        r = json.loads((j / 'install-receipt.json').read_text())
+        self.assertTrue(r['ok'])
+        self.assertEqual(len(r['files']), 1)
+        row = r['files'][0]
+        self.assertEqual((row['dest'], row['action'], row['readback_ok'], row['rollback_readback_ok']),
+                         (tr, 'replaced', True, True))
+        self.assertEqual((self.card / row['rollback_copy']).read_bytes(), b'other plugin')
+        self.assertEqual((j / 'before' / tr).read_bytes(), b'other plugin')
+        self.assertEqual((self.card / tr).read_bytes(), new)
+        self.assertEqual(r['other_files_changed'], [])
+        self.assertEqual((self.card / nsav_nsp).read_bytes(), b'PFS0 nsav')
+        self.assertEqual((self.card / probe).read_bytes(), b'NRO0 probe')
+        # authorized.json cannot be used to reach the sysmodule folder (it stays plugin-NRO only).
+        j2 = self.job('tr-bad', {nsav_nsp: b'x'})
+        (j2 / 'authorized.json').write_text(json.dumps([{'dest': nsav_nsp, 'sha256': oi.sha(b'x'), 'bytes': 1,
+                                                         'authorization': 'x', 'source': 'x'}]))
+        with self.assertRaises(SystemExit) as cm:
+            self.run_tool('preflight', str(j2))
+        self.assertIn('not a plugin NRO', str(cm.exception))
 
     def test_authorization_is_exact(self):
         deluxe = 'atmosphere/contents/01006A800016E000/romfs/skyline/plugins/libssbu_online_deluxe_rewrite.nro'

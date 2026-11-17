@@ -13,6 +13,8 @@ this run follows). Only these destinations are allowed:
   ultimate/switch-remote/config.txt
   atmosphere/contents/4200000000004150/exefs.nsp | toolbox.json | flags/boot2.flag   (sys-autopilot, option d)
   config/sys-autopilot/config.ini
+  atmosphere/contents/4200000000004156/exefs.nsp | toolbox.json | flags/boot2.flag   (ns-autoverify)
+  config/ns-autoverify/observe-only | disabled | verify-now;  switch/nsav-probe/nsav-probe.nro
 
 An optional `remove.txt` (one path per line, # comments) deletes allowed files (option d: our sysmodule's
 flags/boot2.flag). Removed files are kept locally under before/,
@@ -54,11 +56,22 @@ ALLOWED = (
     'atmosphere/contents/4200000000004150/toolbox.json',
     'atmosphere/contents/4200000000004150/flags/boot2.flag',
     'config/sys-autopilot/config.ini',
+    # ns-autoverify (primary 2026-11-17: fast clear of SSBU's false-positive corrupt-data state, gated by ns
+    # IsDataCorruptedResult). Stage 1 = exefs.nsp + toolbox.json WITHOUT boot2.flag (started by hand in ovlSysmodules);
+    # Stage 2 adds the flag in its own receipted session. Config files are its empty switch files. The probe NRO is
+    # run once from hbmenu to prove which ns call clears the state.
+    'atmosphere/contents/4200000000004156/exefs.nsp',
+    'atmosphere/contents/4200000000004156/toolbox.json',
+    'atmosphere/contents/4200000000004156/flags/boot2.flag',
+    'config/ns-autoverify/observe-only',
+    'config/ns-autoverify/disabled',
+    'config/ns-autoverify/verify-now',
+    'switch/nsav-probe/nsav-probe.nro',
 )
 # remove.txt may delete the same files (e.g. our sysmodule's boot2.flag when sys-autopilot takes over, option d).
 REMOVABLE = ALLOWED
 WATCH_DIRS = ('atmosphere/contents/01006A800016E000/romfs/skyline/plugins', 'atmosphere/contents/4200000000005352',
-              'atmosphere/contents/4200000000004150')
+              'atmosphere/contents/4200000000004150', 'atmosphere/contents/4200000000004156')
 BACKUP_DIR = 'ultimate/switch-remote/backups'
 SECRET = ('ultimate/switch-remote/config.txt', 'config/sys-autopilot/config.ini')  # its hash goes in the receipt; its content never in any output
 
