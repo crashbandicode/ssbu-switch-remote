@@ -42,7 +42,10 @@ STICK_MAX = 32767
 # Eden's button names, in macro-bit order (Eden src/yuzu/macro_file.cpp:323-331).
 BUTTONS = ['a', 'b', 'x', 'y', 'lstick', 'rstick', 'l', 'r', 'zl', 'zr', 'plus', 'minus', 'left', 'up',
            'right', 'down', 'sl_left', 'sr_left', 'home', 'capture', 'sl_right', 'sr_right']
-ALIASES = {'dleft': 'left', 'dup': 'up', 'dright': 'right', 'ddown': 'down', 'start': 'plus', 'select': 'minus'}
+ALIASES = {'dleft': 'left', 'dup': 'up', 'dright': 'right', 'ddown': 'down', 'start': 'plus', 'select': 'minus',
+           # GameCube names (docs/GC-MODE.md; CH-F004: L/R/Z stand in for ZL/ZR/R)
+           'z': 'r', 'gc_l': 'zl', 'gc_r': 'zr', 'gc_start': 'plus'}
+STICK_NAMES = {'left': 'l', 'right': 'r', 'cstick': 'r'}
 EDEN_DEFAULT_LEASE_MS = 1000   # CLIControl.md: held input default lease
 EDEN_DEFAULT_TAP_MS = 100      # CLIControl.md: taps default to 100 ms
 MACRO_SAMPLES_MAX = 4096
@@ -71,8 +74,29 @@ def stick_value(v):
     return int(round(max(-1.0, min(1.0, v)) * STICK_MAX))
 
 
+def event_buttons(value):
+    """An event's `buttons`: the Eden bit mask, or a list of names (Eden or GameCube names, docs/GC-MODE.md)."""
+    if isinstance(value, (list, tuple)):
+        mask = 0
+        for name in value:
+            mask |= 1 << button_bit(str(name))
+        return mask
+    return int(value or 0)
+
+
+def trigger_value(v):
+    v = float(v)
+    if v != v:  # NaN
+        return 0
+    return int(round(max(0.0, min(1.0, v)) * 255))
+
+
 def macro_lines(doc):
-    """MBEGIN/MEV lines for an .edenmacro.json document (format eden-input-macro, version 1)."""
+    """MBEGIN/MEV lines for an .edenmacro.json document (format eden-input-macro, version 1).
+
+    switch-pad extensions (docs/GC-MODE.md): `buttons` may be a list of names, and `triggers: [l, r]` (0..1) gives
+    the GameCube analog triggers (0..1, Eden's convention). Only a document with a NON-ZERO trigger value gets the two
+    extra MEV fields, so every other document (Eden recordings carry "triggers": [0, 0]) produces the same lines as before (the sysmodule accepts only the six-field MEV)."""
     if doc.get('format') != 'eden-input-macro':
         raise SwitchError('bad_macro', 'not an eden-input-macro file')
     events = doc.get('events') or []
@@ -81,10 +105,17 @@ def macro_lines(doc):
         raise SwitchError('bad_macro', 'no events or no duration')
     if len(events) > MACRO_SAMPLES_MAX:
         raise SwitchError('bad_macro', f'{len(events)} samples; the sysmodule holds {MACRO_SAMPLES_MAX}')
+    # Eden's own files carry "triggers": [0, 0] (Pro Controllers have no analog triggers): only a non-zero value
+    # makes this a GameCube-analog document.
+    analog = any(trigger_value(v) for e in events for v in (e.get('triggers') or [])[:2])
     lines = [f'MBEGIN {len(events)} {duration}']
     for e in events:
         sticks = [stick_value(v) for v in (e.get('sticks') or [0, 0, 0, 0])[:4]]
-        lines.append(f'MEV {int(e["frame"])} {int(e.get("buttons", 0))} ' + ' '.join(map(str, sticks)))
+        line = f'MEV {int(e["frame"])} {event_buttons(e.get("buttons", 0))} ' + ' '.join(map(str, sticks))
+        if analog:
+            lt, rt = (list(e.get('triggers') or [0, 0]) + [0, 0])[:2]
+            line += f' {trigger_value(lt)} {trigger_value(rt)}'
+        lines.append(line)
     return lines
 
 
@@ -255,7 +286,7 @@ class SwitchClient:
             self._sys(f'BTN {bit} {state} {max(1, min(10000, ms))}')
             return {'accepted': True}
         if method == 'input.stick':
-            which = {'left': 'l', 'right': 'r'}.get(p.get('stick', 'left'))
+            which = STICK_NAMES.get(p.get('stick', 'left'))
             if not which:
                 raise SwitchError('bad_arguments', f'stick {p.get("stick")!r}')
             ms = int(p.get('lease_ms', EDEN_DEFAULT_LEASE_MS))
@@ -576,6 +607,10 @@ def main(argv=None):
         'hold': lambda: c.request('input.button', {'button': args[0], 'state': 'press',
                                                    'lease_ms': int(args[1]) if len(args) > 1 else 1000}),
         'reset': lambda: c.request('input.reset'),
+        # switch-pad only (docs/GC-MODE.md): `mode [pro|gc]`, `trig <l 0..1> <r 0..1> [ms]`
+        'mode': lambda: c.request('pad.mode', {'mode': args[0] if args else None}),
+        'trig': lambda: c.request('input.trigger', {'l': float(args[0]), 'r': float(args[1]),
+                                                    'lease_ms': int(args[2]) if len(args) > 2 else 1000}),
     }
     if cmd not in table:
         ap.error(f'unknown command {cmd}')

@@ -5,7 +5,9 @@
 //   padsim --tcp PORT --token TOKEN [--bind 127.0.0.1] [--log ..]  TCP: prints "tcp PORT" on stdout
 // Serves the line protocol exactly as the firmware does on UART0: one swpad::Pad, a 1 ms report loop,
 // microsecond timestamps from CLOCK_MONOTONIC. Each report change is appended to --log as
-// {"t_us": N, "r": [8 bytes]}. On the pty, boot noise like the ESP32-S3 ROM's is written first. On TCP, the first
+// {"t_us": N, "r": [8 bytes]} (Pro mode) or {"t_us": N, "gc": [37 bytes]} (GC mode); a mode switch logs
+// {"t_us": N, "mode": "gc|pro"}, then 500 ms without reports (the detach), then "the console" re-enumerates and, in GC mode,
+// sends the adapter init 0x13. On the pty, boot noise like the ESP32-S3 ROM's is written first. On TCP, the first
 // line must be `AUTH <token>` (else `ERR auth` and the connection closes); one client at a time.
 // Exits on SIGTERM or when stdin closes.
 #include <arpa/inet.h>
@@ -88,6 +90,8 @@ int main(int argc, char** argv) {
     std::string line;
     bool authed = tcp_port < 0;
     swpad::Report last = swpad::neutral_report();
+    swpad::GcReport last_gc = swpad::neutral_gc_report();
+    uint64_t detach_until = 0;
     bool first = true;
     while (!g_stop) {
         pollfd p[3] = {{0, POLLIN, 0}, {link, POLLIN, 0}, {listener, POLLIN, 0}};
@@ -132,6 +136,18 @@ int main(int argc, char** argv) {
                 sr::LineBuf<192> out;
                 pad.handle(line, now_us() - t0, out);
                 line.clear();
+                swpad::Mode next;
+                if (pad.take_mode_change(next)) {  // as the firmware: detach, 500 ms, swap, re-attach
+                    uint64_t at = now_us() - t0;
+                    detach_until = at + 500000;
+                    pad.set_usb_mounted(false);
+                    if (log) {
+                        std::fprintf(log, "{\"t_us\": %llu, \"mode\": \"%s\"}\n", (unsigned long long)at,
+                                     next == swpad::Mode::Gc ? "gc" : "pro");
+                        std::fflush(log);
+                    }
+                    first = true;
+                }
                 if (out.len) {
                     write_all(link, out.buf, out.len);
                     write_all(link, "\n", 1);
@@ -139,8 +155,30 @@ int main(int argc, char** argv) {
             }
         }
         uint64_t now = now_us() - t0;
-        swpad::Report r = pad.report(now);
+        if (detach_until) {
+            if (now < detach_until) continue;  // detached: no reports
+            detach_until = 0;
+            pad.set_usb_mounted(true);  // "the console" re-enumerated the new personality
+            if (pad.mode() == swpad::Mode::Gc) {
+                const uint8_t init[] = {swpad::kGcInit};
+                pad.output_report(0, init, 1);  // and starts the adapter, as the Switch does
+            }
+        }
+        swpad::PadOut s = pad.state(now);
         pad.count_report();
+        if (pad.mode() == swpad::Mode::Gc) {
+            swpad::GcReport g = swpad::make_gc_report(s);
+            if (log && (first || g != last_gc)) {
+                std::fprintf(log, "{\"t_us\": %llu, \"gc\": [", (unsigned long long)now);
+                for (size_t i = 0; i < sizeof g.b; i++) std::fprintf(log, i ? ", %d" : "%d", g.b[i]);
+                std::fprintf(log, "]}\n");
+                std::fflush(log);
+            }
+            first = false;
+            last_gc = g;
+            continue;
+        }
+        swpad::Report r = swpad::Pad::to_report(s);
         if (log && (first || r != last)) {
             std::fprintf(log, "{\"t_us\": %llu, \"r\": [%d, %d, %d, %d, %d, %d, %d, %d]}\n",
                          (unsigned long long)now, r.b[0], r.b[1], r.b[2], r.b[3], r.b[4], r.b[5], r.b[6], r.b[7]);

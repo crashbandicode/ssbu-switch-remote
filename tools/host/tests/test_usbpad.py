@@ -72,10 +72,10 @@ class Link(Base):
     def test_connects_through_boot_noise_and_answers(self):
         self.assertEqual(self.c.request('ping')['ok'], True)
         v = self.c.request('switch.version')['result']['reply']
-        self.assertEqual(v, 'OK version switch-pad 0.1.2 usb=hori-0f0d:0092')
+        self.assertEqual(v, 'OK version switch-pad 0.2.0 usb=hori-0f0d:0092')
         s = self.c.request('status')['result']
         self.assertEqual((s['backend'], s['state'], s['fw'], s['usb'], s['usb_mounted'], s['gate']),
-                         ('usb', 'reachable', 'switch-pad/0.1.2', 'hori-0f0d:0092', '1', 'not_applicable'))
+                         ('usb', 'reachable', 'switch-pad/0.2.0', 'hori-0f0d:0092', '1', 'not_applicable'))
         self.assertIsNone(s['running'])  # no scene receiver: unknown (information only)
 
     def test_make_client_usb_scheme(self):
@@ -155,6 +155,104 @@ class Macros(Base):
         self.c.wait_leases()
         self.assertEqual(self.c.request('macro.status')['result']['state'], 'finished')
         self.assertTrue(any(x['r'][0] == 0x04 for x in self.reports()))
+
+
+GC_NEUTRAL = [0x21, 0x10, 0, 0, 128, 128, 128, 128, 0, 0] + [0] * 27
+
+
+class GcMode(Base):
+    """docs/GC-MODE.md: MODE gc|pro on the simulator (500 ms detach, then "the console" re-enumerates and sends 0x13)."""
+
+    def wait_gc(self, pred, timeout=2.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            rs = [r for r in self.reports() if 'gc' in r or 'r' in r or 'mode' in r]
+            if rs and 'gc' in rs[-1] and pred(rs[-1]['gc']):
+                return rs[-1]['gc']
+            time.sleep(0.01)
+        self.fail(f'gc report never matched; last {self.reports()[-1:]}')
+
+    def to_gc(self):
+        r = self.c.request('pad.mode', {'mode': 'gc'})
+        self.assertTrue(r['ok'], r)
+        return r['result']
+
+    def test_switch_to_gc_and_back(self):
+        self.assertEqual(self.c.request('pad.mode')['result']['mode'], 'pro')
+        res = self.to_gc()
+        self.assertEqual((res['mode'], res['mounted'], res['usb'], res['gc_init']),
+                         ('gc', True, 'gc-adapter-057e:0337', '1'))
+        self.assertGreaterEqual(res['switch_s'], 0.5)  # the detach
+        self.assertEqual(self.c.request('switch.version')['result']['reply'],
+                         'OK version switch-pad 0.2.0 usb=gc-adapter-057e:0337')
+        self.assertEqual(self.wait_gc(lambda g: True), GC_NEUTRAL)
+        modes = [r for r in self.reports() if 'mode' in r]
+        self.assertEqual([m['mode'] for m in modes], ['gc'])
+        first_gc = next(r for r in self.reports() if 'gc' in r)
+        self.assertGreaterEqual(first_gc['t_us'] - modes[0]['t_us'], 500000)  # no report while detached
+        self.assertEqual(self.c.request('pad.mode', {'mode': 'gc'})['result']['reply'], 'OK mode gc unchanged')
+        back = self.c.request('pad.mode', {'mode': 'pro'})['result']
+        self.assertEqual((back['mode'], back['mounted'], back['usb']), ('pro', True, 'hori-0f0d:0092'))
+        self.assertEqual(self.reports()[-1]['r'], NEUTRAL)
+        st = self.c.request('status')['result']
+        self.assertEqual(st['mode'], 'pro')
+        # Pro mode drives the HORI report exactly as before.
+        self.c.request('input.button', {'button': 'a', 'state': 'press', 'lease_ms': 300})
+        self.wait_report(lambda r: r[0] == 0x04)
+
+    def test_both_triggers_then_dpad_the_on_f006_shape(self):
+        self.to_gc()
+        for b in ('zl', 'zr'):
+            self.assertTrue(self.c.request('input.button', {'button': b, 'state': 'press', 'lease_ms': 3000})['ok'])
+        self.c.request('input.button', {'button': 'down', 'state': 'press', 'lease_ms': 400})
+        g = self.wait_gc(lambda g: g[2] == 0x40)
+        self.assertEqual(g[:10], [0x21, 0x10, 0x40, 0x0c, 128, 128, 128, 128, 255, 255])
+        self.c.request('input.button', {'button': 'zr', 'state': 'release'})  # one trigger released
+        g = self.wait_gc(lambda g: g[3] == 0x08)
+        self.assertEqual((g[8], g[9]), (255, 0))
+        self.c.request('input.reset')
+        self.wait_gc(lambda g: g == GC_NEUTRAL)
+
+    def test_gc_names_cstick_triggers_and_refusals(self):
+        self.to_gc()
+        self.c.request('input.button', {'button': 'z', 'state': 'press', 'lease_ms': 300})
+        self.wait_gc(lambda g: g[3] == 0x02)
+        self.c.request('input.stick', {'stick': 'cstick', 'x': 0, 'y': 1, 'lease_ms': 300})
+        self.wait_gc(lambda g: g[7] == 255)
+        self.assertTrue(self.c.request('input.trigger', {'l': 0.5, 'r': 0, 'lease_ms': 300})['ok'])
+        self.wait_gc(lambda g: g[8] == 128 and g[3] & 0x08 == 0)
+        r = self.c.request('input.button', {'button': 'l'})
+        self.assertEqual(r['error']['code'], 'no_gc_button')
+        r = self.c.request('input.button', {'button': 'minus'})
+        self.assertEqual(r['error']['code'], 'no_gc_button')
+        self.c.request('pad.mode', {'mode': 'pro'})
+        self.assertEqual(self.c.request('input.trigger', {'l': 1, 'r': 1})['error']['code'], 'wrong_mode')
+
+    def test_macro_with_gc_names_and_triggers(self):
+        doc = {'format': 'eden-input-macro', 'version': 1, 'duration_frames': 30, 'events': [
+            {'frame': 0, 'buttons': ['gc_l', 'gc_r'], 'triggers': [1, 1]},
+            {'frame': 10, 'buttons': ['gc_l', 'gc_r', 'down']},
+            {'frame': 20, 'buttons': 0, 'triggers': [0, 0.5]}]}
+        self.assertEqual(sr.macro_lines(doc), ['MBEGIN 3 30', 'MEV 0 768 0 0 0 0 255 255', 'MEV 10 33536 0 0 0 0 0 0',
+                                               'MEV 20 0 0 0 0 0 0 128'])
+        self.to_gc()
+        self.assertTrue(self.c.request('macro.play', {'path': self.write(doc)})['ok'])
+        self.wait_gc(lambda g: g[2] == 0x40 and g[3] == 0x0c)
+        self.wait_gc(lambda g: g[3] == 0 and g[9] == 128)
+        self.wait_gc(lambda g: g == GC_NEUTRAL)
+
+    def test_plain_macros_are_unchanged(self):
+        doc = {'format': 'eden-input-macro', 'version': 1, 'duration_frames': 10,
+               'events': [{'frame': 0, 'buttons': 1, 'sticks': [0, 0.5, 0, 0]}]}
+        self.assertEqual(sr.macro_lines(doc), ['MBEGIN 1 10', 'MEV 0 1 0 16384 0 0'])
+        # Eden recordings carry "triggers": [0, 0]: still the six-field MEV the sysmodule accepts.
+        doc['events'][0]['triggers'] = [0, 0]
+        self.assertEqual(sr.macro_lines(doc), ['MBEGIN 1 10', 'MEV 0 1 0 16384 0 0'])
+
+    def write(self, doc):
+        p = self.tmp / 'm.edenmacro.json'
+        p.write_text(json.dumps(doc))
+        return str(p)
 
 
 class Sequences(Base):
@@ -253,7 +351,7 @@ class PiLink(unittest.TestCase):
         c = self.client()
         try:
             self.assertTrue(c.request('input.button', {'button': 'a', 'duration_ms': 100})['ok'])
-            self.assertEqual(c.request('switch.version')['result']['reply'][:30], 'OK version switch-pad 0.1.2 us')
+            self.assertEqual(c.request('switch.version')['result']['reply'][:30], 'OK version switch-pad 0.2.0 us')
             time.sleep(0.2)
             self.assertTrue(any(r[0] == 0x04 for r in self.reports()))
             self.assertEqual(c.request('status')['result']['backend'], 'usb')

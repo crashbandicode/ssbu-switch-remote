@@ -68,7 +68,7 @@ static void sticks_scale_and_y_points_down() {
 static void leases_and_protocol() {
     Pad p;
     CHECK(say(p, "AUTH anything", 0) == "OK auth switch-pad");
-    CHECK(say(p, "VERSION", 0) == "OK version switch-pad 0.1.2 usb=hori-0f0d:0092");
+    CHECK(say(p, "VERSION", 0) == "OK version switch-pad 0.2.0 usb=hori-0f0d:0092");
     CHECK(say(p, "PING", 5 * MS) == "OK pong 5");
     CHECK(say(p, "BTN 0 press 100", 10 * MS) == "OK");
     CHECK(p.report(50 * MS).b[0] == 0x04);
@@ -91,7 +91,7 @@ static void leases_and_protocol() {
     CHECK(say(p, "NONSENSE", 970 * MS).rfind("ERR", 0) == 0);
     CHECK(say(p, "", 970 * MS).empty());
     std::string st = say(p, "STATUS", 980 * MS);
-    CHECK(st.rfind("OK status fw=switch-pad/0.1.2 usb=hori-0f0d:0092 usb_mounted=0 uptime_ms=980", 0) == 0);
+    CHECK(st.rfind("OK status fw=switch-pad/0.2.0 usb=hori-0f0d:0092 usb_mounted=0 uptime_ms=980", 0) == 0);
     CHECK(st.find("macro=idle") != std::string::npos);
     CHECK(say(p, "BYE", 990 * MS) == "OK bye");
 }
@@ -165,7 +165,7 @@ static void v0_verbs() {
     CHECK(r.b[3] == 192 && r.b[4] == 1);
     CHECK(p.report(1301 * MS) == neutral_report());
     CHECK(say(p, "stick -1 -1 100", 1400 * MS) == "OK" && p.report(1450 * MS).b[3] == 1);
-    CHECK(say(p, "status", 1500 * MS).rfind("OK status fw=switch-pad/0.1.2", 0) == 0);
+    CHECK(say(p, "status", 1500 * MS).rfind("OK status fw=switch-pad/0.2.0", 0) == 0);
     CHECK(say(p, "press sl_left 100", 1500 * MS) == "ERR unknown_button sl_left");
     CHECK(say(p, "press q 100", 1500 * MS) == "ERR unknown_button q");
     CHECK(say(p, "press a", 1500 * MS).rfind("ERR bad_arguments", 0) == 0);
@@ -179,7 +179,166 @@ static void v0_verbs() {
     CHECK(p.report(2900 * MS).b[0] == 0x02 && p.report(3001 * MS + 1) == neutral_report());
 }
 
+// --- GC mode (docs/GC-MODE.md) ---------------------------------------------------------------------------------
+static GcReport gc(std::initializer_list<int> port1) {
+    GcReport r{};
+    r.b[0] = 0x21;
+    int i = 1;
+    for (int x : port1) r.b[i++] = uint8_t(x);
+    return r;
+}
+
+static void gc_report_layout() {
+    CHECK(neutral_gc_report() == gc({0x10, 0, 0, 128, 128, 128, 128, 0, 0}));
+    auto port = [](uint32_t bits) {
+        PadOut s;
+        s.buttons = bits;
+        GcReport r = make_gc_report(s);
+        return r.b[2] | r.b[3] << 8;  // buttons1 | buttons2 << 8
+    };
+    CHECK(port(1u << 0) == 0x01);    // a -> A
+    CHECK(port(1u << 1) == 0x02);    // b -> B
+    CHECK(port(1u << 2) == 0x04);    // x -> X
+    CHECK(port(1u << 3) == 0x08);    // y -> Y
+    CHECK(port(1u << 12) == 0x10);   // left
+    CHECK(port(1u << 14) == 0x20);   // right
+    CHECK(port(1u << 15) == 0x40);   // down
+    CHECK(port(1u << 13) == 0x80);   // up
+    CHECK(port(1u << 10) == 0x100);  // plus -> Start
+    CHECK(port(1u << 7) == 0x200);   // r -> Z
+    CHECK(port(1u << 9) == 0x400);   // zr -> R click
+    CHECK(port(1u << 8) == 0x800);   // zl -> L click
+    // No GameCube button: l, lstick, rstick, minus, home, capture, SL/SR.
+    CHECK(port((1u << 6) | (1u << 4) | (1u << 5) | (1u << 11) | (1u << kHome) | (1u << kCapture) | (1u << 16)) == 0);
+    CHECK(port((1u << 12) | (1u << 14)) == 0 && port((1u << 13) | (1u << 15) | (1u << 14)) == 0x20);  // opposites
+    // Clicks read 255 analog; the analog lease shows otherwise; ports 2-4 stay empty.
+    PadOut s;
+    s.buttons = (1u << 8) | (1u << 9);
+    GcReport r = make_gc_report(s);
+    CHECK(r.b[8] == 255 && r.b[9] == 255);
+    s.buttons = 1u << 8;
+    s.rt = 77;
+    r = make_gc_report(s);
+    CHECK(r.b[8] == 255 && r.b[9] == 77);
+    for (int i = 10; i < 37; i++) CHECK(r.b[i] == 0);
+    // Axes: up = 255 (no inversion), the C-stick is the right stick.
+    s = PadOut{};
+    s.lx = 32767;
+    s.ly = 32767;
+    s.rx = -32767;
+    s.ry = -32767;
+    r = make_gc_report(s);
+    CHECK(r.b[4] == 255 && r.b[5] == 255 && r.b[6] == 1 && r.b[7] == 1);
+}
+
+static void gc_mode_switching() {
+    Pad p;
+    Mode next = Mode::Gc;
+    CHECK(p.mode() == Mode::Pro && !p.take_mode_change(next));
+    CHECK(say(p, "MODE", 0) == "OK mode pro");
+    CHECK(say(p, "MODE pro", 0) == "OK mode pro unchanged" && !p.take_mode_change(next));
+    CHECK(say(p, "MODE wii", 0).rfind("ERR bad_arguments", 0) == 0);
+    CHECK(say(p, "TRIG 255 0 100", 0) == "ERR wrong_mode TRIG needs MODE gc");
+    // Held input and a playing macro do not survive a switch.
+    CHECK(say(p, "BTN 0 press 5000", 0) == "OK");
+    CHECK(say(p, "MBEGIN 1 600", 0) == "OK" && say(p, "MEV 0 2 0 0 0 0", 0).empty() && say(p, "MPLAY", 0) == "OK");
+    p.set_usb_mounted(true);
+    CHECK(say(p, "MODE gc", 10 * MS) == "OK mode gc switching");
+    CHECK(p.take_mode_change(next) && next == Mode::Gc && !p.take_mode_change(next));
+    CHECK(p.mode() == Mode::Gc && p.gc_report(20 * MS) == neutral_gc_report());
+    CHECK(say(p, "MSTATUS", 20 * MS).rfind("OK macro state=idle", 0) == 0);
+    CHECK(say(p, "VERSION", 20 * MS) == "OK version switch-pad 0.2.0 usb=gc-adapter-057e:0337");
+    std::string st = say(p, "STATUS", 30 * MS);
+    CHECK(st.find("usb=gc-adapter-057e:0337 usb_mounted=0 ") != std::string::npos);
+    CHECK(st.find(" macro=idle mode=gc gc_init=0 gc_rumble=0") == st.size() - 41);
+    // The console's output reports: 0x13 init (with or without a report ID), 0x11 rumble.
+    const uint8_t init[] = {0x13};
+    const uint8_t rumble[] = {0x01, 0x00, 0x00, 0x00};
+    p.output_report(0, init, 1);
+    p.output_report(0x13, nullptr, 0);
+    p.output_report(0x11, rumble, 4);
+    st = say(p, "STATUS", 40 * MS);
+    CHECK(st.find(" mode=gc gc_init=2 gc_rumble=1") != std::string::npos && p.gc_inits() == 2);
+    CHECK(say(p, "mode", 50 * MS) == "OK mode gc");
+    CHECK(say(p, "mode gc", 50 * MS) == "OK mode gc unchanged");
+    CHECK(say(p, "mode pro", 60 * MS) == "OK mode pro switching");
+    CHECK(p.take_mode_change(next) && next == Mode::Pro);
+    CHECK(say(p, "STATUS", 70 * MS).find(" macro=idle mode=pro") != std::string::npos);
+    // Pro mode ignores output reports, as 0.1.2 did.
+    p.output_report(0, init, 1);
+    CHECK(p.gc_inits() == 2);
+    CHECK(say(p, "BTN 0 tap 100", 80 * MS) == "OK" && p.report(90 * MS).b[0] == 0x04);
+}
+
+static void gc_mode_input() {
+    Pad p;
+    Mode next;
+    CHECK(say(p, "MODE gc", 0) == "OK mode gc switching" && p.take_mode_change(next));
+    // ON-F006's input shape: both triggers held, then a d-pad press on top.
+    CHECK(say(p, "press zl+zr 3000", 0) == "OK");
+    CHECK(say(p, "press down 200", 100 * MS) == "OK");
+    GcReport r = p.gc_report(150 * MS);
+    CHECK(r == gc({0x10, 0x40, 0x0c, 128, 128, 128, 128, 255, 255}));
+    CHECK(say(p, "BTN 9 release 1", 400 * MS) == "OK");  // release R: L alone stays
+    r = p.gc_report(450 * MS);
+    CHECK(r.b[3] == 0x08 && r.b[8] == 255 && r.b[9] == 0);
+    CHECK(say(p, "clear", 500 * MS) == "OK" && p.gc_report(501 * MS) == neutral_gc_report());
+    // GameCube names, the C-stick, analog triggers.
+    CHECK(say(p, "press z+start+a 100", 600 * MS) == "OK" && p.gc_report(650 * MS).b[3] == 0x03);
+    CHECK(say(p, "press gc_l+gc_r 100", 700 * MS) == "OK" && p.gc_report(750 * MS).b[3] == 0x0c);
+    CHECK(say(p, "cstick 0 1 100", 800 * MS) == "OK" && p.gc_report(850 * MS).b[7] == 255);
+    CHECK(say(p, "STICK r 0 -32767 100", 900 * MS) == "OK" && p.gc_report(950 * MS).b[7] == 1);
+    CHECK(say(p, "trig 0.5 1 100", 1000 * MS) == "OK");
+    r = p.gc_report(1050 * MS);
+    CHECK(r.b[8] == 128 && r.b[9] == 255 && r.b[3] == 0);  // analog only: no click
+    CHECK(p.gc_report(1101 * MS).b[8] == 0);
+    CHECK(say(p, "TRIG 40 200 100", 1200 * MS) == "OK" && p.gc_report(1250 * MS).b[9] == 200);
+    CHECK(say(p, "TRIG 256 0 100", 1200 * MS).rfind("ERR bad_arguments", 0) == 0);
+    CHECK(say(p, "trig 1.5 0 100", 1200 * MS).rfind("ERR bad_arguments", 0) == 0);
+    // No GameCube button: refused as live input.
+    CHECK(say(p, "press l 100", 1300 * MS) == "ERR no_gc_button l");
+    CHECK(say(p, "press a+minus 100", 1300 * MS) == "ERR no_gc_button minus");
+    CHECK(say(p, "BTN 6 tap 100", 1300 * MS) == "ERR no_gc_button l");
+    CHECK(say(p, "BTN 18 tap 100", 1300 * MS) == "ERR no_gc_button home");
+    CHECK(say(p, "BTN 19 tap 100", 1300 * MS) == "ERR no_gc_button capture");
+    CHECK(say(p, "press home 100", 1300 * MS) == "ERR no_gc_button home");
+    CHECK(p.gc_report(1310 * MS) == neutral_gc_report());
+    // The watchdog covers the trigger lease.
+    CHECK(say(p, "TRIG 255 255 10000", 2000 * MS) == "OK");
+    CHECK(p.gc_report(2900 * MS).b[8] == 255 && p.gc_report(3001 * MS + 1) == neutral_gc_report());
+    CHECK(p.watchdog_trips() == 1);
+}
+
+static void gc_macro_triggers() {
+    Pad p;
+    Mode next;
+    CHECK(say(p, "MODE gc", 0) == "OK mode gc switching" && p.take_mode_change(next));
+    CHECK(say(p, "MBEGIN 3 30", 0) == "OK");
+    CHECK(say(p, "MEV 0 768 0 0 0 0 255 255", 0).empty());     // zl+zr, analog 255
+    CHECK(say(p, "MEV 10 33600 0 0 0 0 255 255", 0).empty());  // + down (bit 15) ... and l (bit 6: dropped)
+    CHECK(say(p, "MEV 20 0 0 0 0 0 0 90", 0).empty());         // analog R only
+    CHECK(say(p, "MEV 30 0 0 0 0 0 0 300", 0) == "ERR out_of_range");
+    CHECK(say(p, "MSTATUS", 0) == "OK macro state=ready frame=0 duration=30 loaded=3 error=");
+    const uint64_t t0 = 1000 * MS;
+    CHECK(say(p, "MPLAY", t0) == "OK");
+    CHECK(p.gc_report(t0) == gc({0x10, 0, 0x0c, 128, 128, 128, 128, 255, 255}));
+    CHECK(p.gc_report(t0 + 166667) == gc({0x10, 0x40, 0x0c, 128, 128, 128, 128, 255, 255}));
+    CHECK(p.gc_report(t0 + 333334) == gc({0x10, 0, 0, 128, 128, 128, 128, 0, 90}));
+    CHECK(p.gc_report(t0 + 500000) == neutral_gc_report());
+    // A plain 6-field MEV after an 8-field one carries no stale analog value.
+    CHECK(say(p, "MBEGIN 1 10", 2000 * MS) == "OK" && say(p, "MEV 0 0 0 0 0 0", 2000 * MS).empty());
+    CHECK(say(p, "MPLAY", 2000 * MS) == "OK" && p.gc_report(2000 * MS) == neutral_gc_report());
+    // Pro mode plays the same macro with the HORI report (analog ignored).
+    Pad q;
+    CHECK(say(q, "MBEGIN 1 10", 0) == "OK" && say(q, "MEV 0 768 0 0 0 0 255 255", 0).empty());
+    CHECK(say(q, "MPLAY", 0) == "OK" && q.report(1).b[0] == 0xc0);
+}
+
 int main() {
+    gc_report_layout();
+    gc_mode_switching();
+    gc_mode_input();
+    gc_macro_triggers();
     v0_verbs();
     report_layout_matches_the_hori_descriptor();
     dpad_becomes_the_hat();

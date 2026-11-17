@@ -463,6 +463,11 @@ watchdog; flashing against a fake esptool.
 UART port: `write_flash` of bootloader, partition table and app, with esptool's own hash verification. The receipt
 holds the firmware sha256s, the esptool output and the chip MAC.
 
+**GC mode (0.2.0, 2026-11-17, docs/GC-MODE.md).** The operator: "Just add a gc mode to esp32 you can switch to on a
+dime". `MODE gc` makes the board a GameCube Controller Adapter (057E:0337, our pad on port 1); `MODE pro` returns to the
+HORI pad. The switch is a USB soft-detach, a descriptor swap and a re-attach. Pro mode is the power-up default, with
+the same bytes as 0.1.2. It exists for catalog rows that need a GameCube controller (ON-F006, CH-F004).
+
 **Consequences for options (d)/(c).**
 - sys-autopilot and our sysmodule are no longer needed for INPUT.
 - The card session: REMOVE our sysmodule's `boot2.flag` and UPDATE the NRO and config. sys-autopilot becomes an

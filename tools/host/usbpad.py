@@ -13,6 +13,8 @@ protocol, so this client is SwitchClient over a serial link:
   switch.list / file / fetch                 -> the OPTIONAL sys-autopilot (files=autopilot://IP), else unsupported
   ui.* / recording.* / jobs.get              -> the capture card, as SwitchClient (OBS, else capd)
   status                                     -> the firmware's STATUS + the scene report as INFORMATION + capture
+  pad.mode {"mode": "pro"|"gc"}              -> MODE: Pro (HORI) <-> GameCube adapter, waits for the re-enumeration
+  input.trigger {"l", "r", "lease_ms"}       -> TRIG: GameCube analog triggers (GC mode; docs/GC-MODE.md)
 
 There is no online gate on this route (primary direction 2026-11-16: a plain wired controller needs none). HOME
 and CAPTURE stay refused as plain buttons; only the sequences press HOME. While connected the client sends PING
@@ -31,9 +33,10 @@ import tty
 from pathlib import Path
 
 from sequences import LAUNCH_QUIET_MS, HomeSequences
-from switch_remote import Connection, SwitchClient, SwitchError, parse_kv, read_token
+from switch_remote import Connection, SwitchClient, SwitchError, parse_kv, read_token, trigger_value
 
 BAUD = 921600
+MODE_TIMEOUT_S = 10.0
 KEEPALIVE_S = 0.3
 SETTLE_S = 1.5
 SERIAL_TOKEN = 'serial-link-no-token'  # the firmware accepts AUTH: the link is physical
@@ -225,9 +228,39 @@ class UsbClient(HomeSequences, SwitchClient):
             return self.files._dispatch(method, p)
         if method == 'switch.version':
             return {'reply': self._sys('VERSION')}
+        if method == 'pad.mode':
+            return self.mode(p.get('mode'), float(p.get('timeout_s', MODE_TIMEOUT_S)))
+        if method == 'input.trigger':
+            ms = int(p.get('lease_ms', 1000))
+            self._sys(f'TRIG {trigger_value(p.get("l", 0))} {trigger_value(p.get("r", 0))} {max(1, min(10000, ms))}')
+            return {'accepted': True}
         if method.startswith('switch.'):
             raise SwitchError('unsupported', f'{method}: switch-pad is a wired controller (DESIGN.md 13)')
         return super()._dispatch(method, p)
+
+    def mode(self, want=None, timeout_s=MODE_TIMEOUT_S):
+        """`MODE [pro|gc]` (docs/GC-MODE.md). A switch detaches the pad for 500 ms and the console re-enumerates it;
+        this waits until STATUS shows the new mode mounted (usb_mounted=1), or raises mode_not_mounted."""
+        if want not in (None, 'pro', 'gc'):
+            raise SwitchError('bad_arguments', f'mode {want!r}: pro or gc')
+        t0 = time.monotonic()
+        reply = self._sys(f'MODE {want}' if want else 'MODE')
+        parts = reply.split()
+        if len(parts) < 3 or parts[:2] != ['OK', 'mode']:
+            raise SwitchError('bad_reply', reply)
+        out = {'mode': parts[2], 'reply': reply}
+        if 'switching' not in parts[3:]:
+            return out
+        kv = {}
+        while time.monotonic() - t0 < timeout_s:
+            time.sleep(0.1)
+            kv = parse_kv(self._sys('STATUS'))
+            if kv.get('mode') == parts[2] and kv.get('usb_mounted') == '1':
+                out.update({'mounted': True, 'switch_s': round(time.monotonic() - t0, 3),
+                            'usb': kv.get('usb'), 'gc_init': kv.get('gc_init')})
+                return out
+        raise SwitchError('mode_not_mounted', f'{parts[2]} not enumerated by the console within {timeout_s} s '
+                          f'(usb_mounted={kv.get("usb_mounted")}); `mode pro` returns to the HORI pad')
 
     def list(self, root, directory=''):
         return self._dispatch('switch.list', {'root': root, 'dir': directory})

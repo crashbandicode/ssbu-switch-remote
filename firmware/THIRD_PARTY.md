@@ -27,6 +27,17 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 The descriptor layout itself was reverse-engineered by progmem/Switch-Fightstick (MIT, `af49d546`), from HORI's
 Pokken Tournament Pro Pad.
 
+## GC mode: GameCube Controller Adapter interface facts (nothing copied)
+
+The GC-mode descriptors and report in `firmware/main/main.cpp` and `firmware/core/pad.cpp` are written from public
+descriptions of the adapter's interface, cited in `docs/GC-MODE.md`:
+- SDL `src/joystick/hidapi/SDL_hidapi_gamecube.c` (zlib);
+- the `gc-adapter` crate 0.1.2 (`lib.rs`, `parsing.rs`, `usb/libusb.rs`);
+- Dolphin's guide to the official adapter (USB ID 057E 0337, "WUP-028");
+- the gcadapter-oc-kmod / gcadapter_oc-dkms READMEs (stock bInterval 8, 125 Hz).
+
+No code is copied. The HID report descriptor is our own, because the official one is not published.
+
 ## Studied only (nothing copied)
 
 - ns2bench `firmware/pico/src/main.rs` (`a105ca7`, GPL-3.0): the HORI identity, UART host link and 1 s watchdog

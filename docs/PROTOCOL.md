@@ -17,6 +17,24 @@ The firmware speaks the host-channel lines below over its UART (921,600 baud, 8N
 - If no line arrives for 1 s, everything goes neutral, including a playing macro (`error=watchdog`).
 - Boot noise from the ROM may precede the first reply; the host skips lines until `OK auth`.
 
+GC mode (0.2.0, docs/GC-MODE.md): the board can present a GameCube Controller Adapter (057E:0337) instead of the HORI
+pad. Pro mode is the default at every power-up; the mode is never stored.
+
+| Line | Reply | Notes |
+| --- | --- | --- |
+| `MODE` / `mode` | `OK mode pro\|gc` | |
+| `MODE pro\|gc` / `mode pro\|gc` | `OK mode gc switching` / `OK mode gc unchanged` | releases input, stops a macro, USB detach 500 ms, swap, re-attach |
+| `TRIG <l 0-255> <r 0-255> <ms>` / `trig <l 0..1> <r 0..1> <ms>` | `OK` | analog trigger lease; `ERR wrong_mode` in Pro mode |
+| `MEV <frame> <buttons> <lx> <ly> <rx> <ry> <lt> <rt>` | as MEV | optional analog triggers 0-255 (ignored in Pro mode) |
+| `cstick <x> <y> <ms>` | `OK` | v0 right stick (the C-stick) |
+
+- `VERSION` → `… usb=gc-adapter-057e:0337` in GC mode.
+- `STATUS` ends with ` mode=pro`, or ` mode=gc gc_init=<0x13 count> gc_rumble=<port-1 byte>`. `usb_mounted=0` from
+  the detach until the console has configured the new device.
+- GC mode refuses live input that names a button the GameCube pad lacks (`l`, `minus`, `lstick`, `rstick`, `home`,
+  `capture`): `ERR no_gc_button <name>`. Macro samples drop those bits. Mapping (CH-F004): zl → L, zr → R, r → Z,
+  plus → Start, right stick → C-stick. v0 names: `z`, `gc_l`, `gc_r`, `gc_start`.
+
 ## Transport
 
 - TCP, ASCII lines ending in LF (a CR before it is ignored), at most 255 bytes per request.

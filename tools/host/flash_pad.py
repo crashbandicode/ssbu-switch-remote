@@ -76,7 +76,7 @@ def main(argv=None):
     ap.add_argument('--out', required=True)
     ap.add_argument('--port', default='auto')
     ap.add_argument('--esptool', default=DEFAULT_ESPTOOL)
-    ap.add_argument('--expect-version', default='0.1.2')
+    ap.add_argument('--expect-version', default='0.2.0')
     ap.add_argument('--boot-wait', type=float, default=2.0)
     a = ap.parse_args(argv)
     out = Path(a.out)
