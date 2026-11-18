@@ -6,8 +6,8 @@ reports each plugin LoadModule (success/failure, with the ro error code), "Runni
 `main` for …". Start this just BEFORE the launch press; it retries the connection every --retry-s, appends every
 received chunk (raw bytes) to the log with a UTC timestamp header, and reconnects after a drop.
 
-  skyline_tcplog.py --label smokeA-r3-1 [--host 172.30.254.79] [--port 6969] [--seconds 600]
-      -> /home/user/smash-training-lobby/artifacts/switch-remote-card/skyline-tcp-<label>.log
+  skyline_tcplog.py --label smokeA-r3-1 [--host SWITCH] [--port 6969] [--seconds 600]
+      -> tools/host/out/skyline-tcp-<label>.log
 Read-only: it only connects and reads.
 """
 import argparse
@@ -17,7 +17,9 @@ import sys
 import time
 from pathlib import Path
 
-OUT_DIR = Path('/home/user/smash-training-lobby/artifacts/switch-remote-card')
+from connection_config import connection_setting
+
+OUT_DIR = Path(__file__).resolve().parent / 'out'
 
 
 def stamp():
@@ -67,12 +69,13 @@ def run(host, port, out, seconds, retry_s=0.5, connect_timeout=1.0):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--label', required=True)
-    ap.add_argument('--host', default='172.30.254.79')
+    ap.add_argument('--host', help='Switch address, overrides local config')
     ap.add_argument('--port', type=int, default=6969)
     ap.add_argument('--seconds', type=float, default=600)
     ap.add_argument('--retry-s', type=float, default=0.5)
     ap.add_argument('--out-dir', default=str(OUT_DIR))
     a = ap.parse_args(argv)
+    a.host = connection_setting(ap, 'host', '--host', a.host)
     out = Path(a.out_dir) / f'skyline-tcp-{a.label}.log'
     stats = run(a.host, a.port, out, a.seconds, a.retry_s)
     print(f'{out} connects={stats["connects"]} bytes={stats["bytes"]}')

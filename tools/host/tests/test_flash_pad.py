@@ -107,7 +107,7 @@ class Flash(unittest.TestCase):
             flash_pad.CH343_GLOB = orig
 
     def test_real_build_output_shapes_the_command(self):
-        real = Path('/home/user/ssbu-switch-remote-work/pad/433f357')
+        real = Path.home() / 'ssbu-switch-remote-work/pad/433f357'
         if not real.exists():
             self.skipTest('no local build')
         flash_pad.check_build(real)

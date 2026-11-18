@@ -47,18 +47,33 @@ idf.py -C firmware set-target esp32s3 build        # the ESP32-S3 firmware (ESP-
 On this workspace's hosts, the NRO gates run through `remote-gate.ps1` and the sysmodule through
 `tools/build_sysmodule.ps1` (the Yoga).
 
+## Configure the device address
+
+Create a local file named `.switch-remote.json` in the repository root:
+
+```json
+{
+  "host": "switch.example.invalid",
+  "network": "192.0.2.0/24"
+}
+```
+
+Set `host` to your Switch's address. Set `network` to your LAN CIDR if you use
+`discover.py`. For the wired backend, set `device` to the USB serial path or pass it on the command line. The file is ignored by Git. Set `SWITCH_REMOTE_CONFIG` to an absolute
+path if you keep the file elsewhere. Explicit `--host`, `--device` or `--net`
+options take precedence. The token is read separately from
+`~/.config/switch-remote/token` or the path in `SWITCH_REMOTE_TOKEN_FILE`.
+
 ## Use
 
 ```text
-tools/host/capd.py serve                             # capture fallback when OBS is not running
-tools/host/switch_remote.py --host 172.30.254.92 status
-tools/host/switch_remote.py --host 172.30.254.92 shot now.png
-tools/host/switch_test.py run eden/rows.json --host 172.30.254.92 --mirror diag_log=ultimate:<plugin>/events.log
-tools/host/switch_remote.py --backend usb --host /dev/serial/by-id/<CH343> call switch.version   # the wired pad
-/usr/bin/pwsh -NoLogo -NoProfile -NonInteractive -File tools/host/resume_smoke.ps1 -Phase flash   # flash the board
-tools/host/scened.py serve &                                                # scene receiver + gate
-tools/host/switch_remote.py --backend autopilot --host 172.30.254.53 status   # the driver (option d)
-tools/host/switch_remote.py --backend autopilot --host 172.30.254.53 launch   # HOME -> image gate -> A
+tools/host/capd.py serve
+tools/host/switch_remote.py status
+tools/host/switch_remote.py shot now.png
+tools/host/switch_test.py run /path/to/rows.json --backend autopilot
+tools/host/switch_remote.py --backend usb call switch.version
+tools/host/switch_remote.py --backend autopilot launch
+tools/host/skyline_tcplog.py --label capture
 ```
 
 Protocol: `docs/PROTOCOL.md`. Restrictions: `docs/RESTRICTIONS.md`.

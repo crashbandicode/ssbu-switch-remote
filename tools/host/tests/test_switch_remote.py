@@ -18,7 +18,7 @@ sys.path.insert(0, str(HOST))
 import switch_remote as sr  # noqa: E402
 
 LOOPBACK = REPO / 'sysmodule' / 'out' / 'loopback'
-PLAYBOOK = Path('/home/user/ssbu-mod-playbook')
+PLAYBOOK = Path.home() / 'ssbu-mod-playbook'
 TAP_A = PLAYBOOK / 'tools' / 'eden-runner' / 'library' / 'segments' / 'tap-a.edenmacro.json'
 TOKEN = 'test-token-0123456789'
 
@@ -205,6 +205,7 @@ class AgainstLoopback(unittest.TestCase):
         self.assertIn(32767, ys)
         self.assertFalse(self.c.request('input.button', {'button': 'home', 'state': 'tap'})['ok'])
 
+    @unittest.skipUnless(TAP_A.is_file(), 'external Eden macro fixture is unavailable')
     def test_macro_events_parity_with_eden_file(self):
         doc = json.loads(TAP_A.read_text())
         # The lines carry exactly the Eden file's samples.

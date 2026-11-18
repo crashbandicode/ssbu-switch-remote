@@ -31,6 +31,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+from connection_config import connection_setting
 import switch_remote as sr  # noqa: E402
 
 LIBRARY = Path.home() / 'ssbu-mod-playbook' / 'tools' / 'eden-runner' / 'library'
@@ -203,7 +204,7 @@ class Smoke:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--host', default='')
+    ap.add_argument('--host', help='Switch address, overrides local config')
     ap.add_argument('--device', help='usb backend: the board\'s UART serial device')
     ap.add_argument('--port', type=int)
     ap.add_argument('--backend', choices=['switch', 'autopilot', 'usb'], default='switch')
@@ -211,6 +212,10 @@ def main(argv=None):
     ap.add_argument('cmd')
     ap.add_argument('args', nargs='*')
     a = ap.parse_args(argv)
+    if a.backend == 'usb':
+        a.device = connection_setting(ap, 'device', '--device', a.device or a.host)
+    else:
+        a.host = connection_setting(ap, 'host', '--host', a.host)
     s = Smoke(a.host, a.port, a.out, a.backend, a.device)
     if a.cmd == 'preflight':
         s.preflight()

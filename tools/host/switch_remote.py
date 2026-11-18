@@ -35,6 +35,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+from connection_config import connection_setting
+
 DEFAULT_PORT = 47130
 DEFAULT_TOKEN_FILE = Path.home() / '.config' / 'switch-remote' / 'token'
 DEFAULT_CAPD = f'/run/user/{os.getuid()}/switch-remote-capd.sock'
@@ -566,7 +568,7 @@ def make_client(socket_string, **kw):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--host', required=True)
+    ap.add_argument('--host', help='device address (USB: serial path), overrides local config')
     ap.add_argument('--port', type=int)
     ap.add_argument('--backend', choices=['switch', 'autopilot', 'usb'], default='switch',
                     help='usb = the ESP32-S3 wired pad (--host is its serial device); autopilot = sys-autopilot')
@@ -575,6 +577,8 @@ def main(argv=None):
     ap.add_argument('cmd')
     ap.add_argument('args', nargs='*')
     a = ap.parse_args(argv)
+    key = 'device' if a.backend == 'usb' else 'host'
+    a.host = connection_setting(ap, key, '--host', a.host)
     if a.backend == 'usb':
         import usbpad
         c = usbpad.UsbClient(a.host, capd_socket=a.capd)

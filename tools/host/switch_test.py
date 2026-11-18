@@ -24,6 +24,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+from connection_config import connection_setting
 import switch_remote as sr  # noqa: E402
 
 DEFAULT_PLAYBOOK = Path.home() / 'ssbu-mod-playbook'
@@ -139,7 +140,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest='cmd', required=True)
     for name in ('preflight', 'run'):
         p = sub.add_parser(name)
-        p.add_argument('--host', default='')
+        p.add_argument('--host', help='Switch address, overrides local config')
         p.add_argument('--device', help='usb backend: the board\'s UART serial device')
         p.add_argument('--port', type=int)
         p.add_argument('--backend', choices=['usb', 'autopilot', 'switch'], default='usb')
@@ -151,6 +152,10 @@ def main(argv=None):
             p.add_argument('--mirror', action='append', default=[])
             p.add_argument('--playbook', default=str(DEFAULT_PLAYBOOK))
     a = ap.parse_args(argv)
+    if a.backend == 'usb':
+        a.device = connection_setting(ap, 'device', '--device', a.device)
+    else:
+        a.host = connection_setting(ap, 'host', '--host', a.host)
     if a.cmd == 'preflight':
         client = make(a)
         report = preflight(client)

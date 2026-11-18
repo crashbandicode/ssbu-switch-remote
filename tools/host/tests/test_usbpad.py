@@ -148,7 +148,7 @@ class Macros(Base):
         self.assertAlmostEqual((end['t_us'] - a['t_us']) / 1000, 666.7, delta=10)
 
     def test_library_segment_runs_unchanged(self):
-        seg = Path('/home/user/ssbu-mod-playbook/tools/eden-runner/library/segments/tap-a.edenmacro.json')
+        seg = Path.home() / 'ssbu-mod-playbook/tools/eden-runner/library/segments/tap-a.edenmacro.json'
         if not seg.exists():
             self.skipTest('playbook library not present')
         self.assertTrue(self.c.request('macro.play', {'path': str(seg)})['ok'])

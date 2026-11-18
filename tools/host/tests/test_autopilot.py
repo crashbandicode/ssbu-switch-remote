@@ -301,7 +301,7 @@ class Macros(Base):
         self.assertEqual(self.srv.held, set())
 
     def test_library_segment_plays(self):
-        seg = Path('/home/user/ssbu-mod-playbook/tools/eden-runner/library/segments/tap-a.edenmacro.json')
+        seg = Path.home() / 'ssbu-mod-playbook/tools/eden-runner/library/segments/tap-a.edenmacro.json'
         if not seg.exists():
             self.skipTest('playbook library not present')
         st = self.play(json.loads(seg.read_text()))

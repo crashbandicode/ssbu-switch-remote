@@ -2,7 +2,7 @@
 """Find the switch-remote sysmodule on the LAN: probe TCP <port> on every address of a /24, then confirm with
 an authenticated PING. Light: one connect attempt per address per round, 0.4 s timeout, 64 at a time.
 
-  discover.py [--net 172.30.254.0/24] [--port 47130] [--prefer 172.30.254.92] [--every 60] [--until-found SECONDS]
+  discover.py [--net CIDR] [--port 47130] [--prefer HOST] [--every 60] [--until-found SECONDS]
   discover.py --backend autopilot ...   (the sys-autopilot fallback: port 4150, confirmed with GET /status)
 
 Prints one JSON line per round; exits 0 with {"found": ip} once a sysmodule answers, 1 when --until-found runs out.
@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from connection_config import connection_setting
 import switch_remote as sr  # noqa: E402
 
 
@@ -57,18 +58,26 @@ def confirm(ip, port, token, backend='switch'):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--net', default='172.30.254.0/24')
+    ap.add_argument('--net', help='LAN CIDR, overrides the local network setting')
     ap.add_argument('--backend', choices=['switch', 'autopilot'], default='switch')
     ap.add_argument('--port', type=int)
-    ap.add_argument('--prefer', action='append', default=['172.30.254.92'])
+    ap.add_argument('--prefer', action='append', help='probe a host before scanning the network')
     ap.add_argument('--every', type=float, default=60)
     ap.add_argument('--until-found', type=float, default=0, help='keep polling this many seconds (0: one round)')
     a = ap.parse_args(argv)
     if a.port is None:
         a.port = 4150 if a.backend == 'autopilot' else sr.DEFAULT_PORT
+    network = connection_setting(ap, 'network', '--net', a.net)
+    try:
+        net = ipaddress.ip_network(network)
+    except ValueError:
+        ap.error('network must be a CIDR range')
+    preferred = a.prefer
+    if preferred is None:
+        configured_host = connection_setting(ap, 'host', '--prefer', required=False)
+        preferred = [configured_host] if configured_host else []
+    hosts = preferred + [str(h) for h in net.hosts() if str(h) not in preferred]
     token = sr.read_token()
-    net = ipaddress.ip_network(a.net)
-    hosts = a.prefer + [str(h) for h in net.hosts() if str(h) not in a.prefer]
     deadline = time.time() + a.until_found
     while True:
         open_ips = asyncio.run(scan(hosts, a.port))
